@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,13 +41,26 @@ public final class Config {
     private final String accountPrivateKey;    // optional — only for encrypt_payload webhooks
     private final String accountPassphrase;
     private final Map<String, String> webhooks; // webhook id -> HMAC secret
+
+    // OPTIONAL — alternative webhook auth methods, mirroring the platform's
+    // per-webhook delivery auth. Configure AT MOST ONE family among
+    // hmac (webhooks/webhook_secret) | bearer | basic | header | none;
+    // two or more → ConfigException. See webhookAuthMethod().
+    private final String webhookBearerToken;            // "Authorization: Bearer <token>"
+    private final Map<String, String> webhookBasic;     // {"username","password"} → Basic auth
+    private final Map<String, String> webhookHeader;    // {"name","value"} → custom header
+    private final boolean webhookAuthNone;              // explicit opt-out — verify always true
+
     private final String cacheDir;
     private final String format;               // json | xml
 
     private Config(String apiUrl, String clientId, String clientSecret,
                    String servicePrivateKey, String keyPassphrase,
                    String accountPrivateKey, String accountPassphrase,
-                   Map<String, String> webhooks, String cacheDir, String format) {
+                   Map<String, String> webhooks,
+                   String webhookBearerToken, Map<String, String> webhookBasic,
+                   Map<String, String> webhookHeader, boolean webhookAuthNone,
+                   String cacheDir, String format) {
         this.apiUrl = apiUrl;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
@@ -55,6 +69,10 @@ public final class Config {
         this.accountPrivateKey = accountPrivateKey;
         this.accountPassphrase = accountPassphrase;
         this.webhooks = webhooks;
+        this.webhookBearerToken = webhookBearerToken;
+        this.webhookBasic = webhookBasic;
+        this.webhookHeader = webhookHeader;
+        this.webhookAuthNone = webhookAuthNone;
         this.cacheDir = cacheDir;
         this.format = format;
     }
@@ -94,7 +112,8 @@ public final class Config {
         return (v != null && !v.isEmpty()) ? v : null;
     }
 
-    private static Config build(Map<String, Object> data) {
+    // Package-private: mirrors the Python reference's Config._build(data) (used by tests).
+    static Config build(Map<String, Object> data) {
         return build(data, System::getenv);
     }
 
@@ -135,6 +154,67 @@ public final class Config {
             webhooks.put(SINGLE_WEBHOOK_KEY, flatSecret);
         }
 
+        // Alternative webhook auth methods (file-config; no env overrides). Validate object shapes.
+        String webhookBearerToken = null;
+        Object bearer = data.get("webhook_bearer_token");
+        if (bearer != null && !String.valueOf(bearer).isEmpty()) {
+            webhookBearerToken = String.valueOf(bearer);
+        }
+
+        Map<String, String> webhookBasic = null;
+        Object basic = data.get("webhook_basic");
+        if (basic != null) {
+            String username = mapStr(basic, "username");
+            String password = mapStr(basic, "password");
+            if (!(basic instanceof Map<?, ?>) || username == null || username.isEmpty()
+                || password == null || password.isEmpty()) {
+                throw new ConfigException(
+                    "\"webhook_basic\" must be an object with non-empty \"username\" and \"password\"");
+            }
+            webhookBasic = new LinkedHashMap<>();
+            webhookBasic.put("username", username);
+            webhookBasic.put("password", password);
+        }
+
+        Map<String, String> webhookHeader = null;
+        Object hdr = data.get("webhook_header");
+        if (hdr != null) {
+            String name = mapStr(hdr, "name");
+            String value = mapStr(hdr, "value");
+            if (!(hdr instanceof Map<?, ?>) || name == null || name.isEmpty()
+                || value == null || value.isEmpty()) {
+                throw new ConfigException(
+                    "\"webhook_header\" must be an object with non-empty \"name\" and \"value\"");
+            }
+            webhookHeader = new LinkedHashMap<>();
+            webhookHeader.put("name", name);
+            webhookHeader.put("value", value);
+        }
+
+        boolean webhookAuthNone = Boolean.TRUE.equals(data.get("webhook_auth_none"));
+
+        // At most one webhook auth method may be configured.
+        List<String> present = new ArrayList<>();
+        if (!webhooks.isEmpty()) {
+            present.add("hmac");
+        }
+        if (webhookBearerToken != null) {
+            present.add("bearer");
+        }
+        if (webhookBasic != null) {
+            present.add("basic");
+        }
+        if (webhookHeader != null) {
+            present.add("header");
+        }
+        if (webhookAuthNone) {
+            present.add("none");
+        }
+        if (present.size() > 1) {
+            throw new ConfigException(
+                "configure at most one webhook auth method (found: " + String.join(", ", present) + ")");
+        }
+
         // Required fields (fail fast).
         Map<String, String> required = new LinkedHashMap<>();
         required.put("api_url", apiUrl);
@@ -169,7 +249,9 @@ public final class Config {
         }
 
         return new Config(apiUrl, clientId, clientSecret, servicePrivateKey, keyPassphrase,
-            accountPrivateKey, accountPassphrase, webhooks, cacheDir, format);
+            accountPrivateKey, accountPassphrase, webhooks,
+            webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
+            cacheDir, format);
     }
 
     private static String pick(String envValue, Object fileValue) {
@@ -177,6 +259,15 @@ public final class Config {
             return envValue;
         }
         return fileValue != null ? String.valueOf(fileValue) : null;
+    }
+
+    /** Read a sub-key from a possibly-Map value as a string (null when absent/not a map). */
+    private static String mapStr(Object obj, String key) {
+        if (obj instanceof Map<?, ?> m) {
+            Object v = m.get(key);
+            return v != null ? String.valueOf(v) : null;
+        }
+        return null;
     }
 
     // ── accessors ───────────────────────────────────────────────────────────
@@ -213,6 +304,22 @@ public final class Config {
         return webhooks;
     }
 
+    public String webhookBearerToken() {
+        return webhookBearerToken;
+    }
+
+    public Map<String, String> webhookBasic() {
+        return webhookBasic;
+    }
+
+    public Map<String, String> webhookHeader() {
+        return webhookHeader;
+    }
+
+    public boolean webhookAuthNone() {
+        return webhookAuthNone;
+    }
+
     public String cacheDir() {
         return cacheDir;
     }
@@ -238,6 +345,32 @@ public final class Config {
     /** Convenience: resolve the single-webhook shortcut secret. */
     public String webhookSecret() {
         return webhookSecret(null);
+    }
+
+    /**
+     * The single configured webhook auth method, or {@code null} if none is set.
+     *
+     * <p>Returns one of {@code "hmac"} | {@code "bearer"} | {@code "basic"} |
+     * {@code "header"} | {@code "none"}. Config loading guarantees at most one is
+     * configured, so the order here is only a tie-break that never triggers.
+     */
+    public String webhookAuthMethod() {
+        if (webhookAuthNone) {
+            return "none";
+        }
+        if (webhookBearerToken != null) {
+            return "bearer";
+        }
+        if (webhookBasic != null) {
+            return "basic";
+        }
+        if (webhookHeader != null) {
+            return "header";
+        }
+        if (!webhooks.isEmpty()) {
+            return "hmac";
+        }
+        return null;
     }
 
     /** A small builder for embedding/tests (the public constructors are file/env). */
@@ -296,6 +429,26 @@ public final class Config {
 
         public Builder webhookSecret(String v) {
             data.put("webhook_secret", v);
+            return this;
+        }
+
+        public Builder webhookBearerToken(String v) {
+            data.put("webhook_bearer_token", v);
+            return this;
+        }
+
+        public Builder webhookBasic(Map<String, String> v) {
+            data.put("webhook_basic", v);
+            return this;
+        }
+
+        public Builder webhookHeader(Map<String, String> v) {
+            data.put("webhook_header", v);
+            return this;
+        }
+
+        public Builder webhookAuthNone(boolean v) {
+            data.put("webhook_auth_none", v);
             return this;
         }
 

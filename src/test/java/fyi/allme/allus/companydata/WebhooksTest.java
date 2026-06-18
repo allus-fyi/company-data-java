@@ -345,4 +345,123 @@ class WebhooksTest {
         assertEquals("chg-1", change.id());
         assertEquals(textPlaintext(), change.value());
     }
+
+    // ── alternative webhook auth methods (bearer / basic / header / none) ────────
+
+    /** Minimal Config carrying one alt-auth field (verify never reads the PEM here). */
+    private static Config.Builder authCfg() {
+        return Config.builder()
+            .apiUrl("https://api.allme.fyi")
+            .clientId("svc")
+            .clientSecret("s")
+            .servicePrivateKey("unused.pem")
+            .keyPassphrase("unused");
+    }
+
+    private static Map<String, Object> fullData(Path tmp, String key, Object value) throws Exception {
+        Path pem = tmp.resolve("k.pem");
+        Files.writeString(pem, (String) vector.get("encrypted_private_key_pem"), StandardCharsets.US_ASCII);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("api_url", "https://api.allme.fyi");
+        data.put("client_id", "svc");
+        data.put("client_secret", "s");
+        data.put("service_private_key", pem.toString());
+        data.put("key_passphrase", vector.get("passphrase"));
+        if (key != null) {
+            data.put(key, value);
+        }
+        return data;
+    }
+
+    @Test
+    void verifyBearerTrue() {
+        Config cfg = authCfg().webhookBearerToken("tok123").build();
+        assertTrue(Webhooks.verifyWebhook("{}", Map.of("Authorization", "Bearer tok123"), cfg));
+    }
+
+    @Test
+    void verifyBearerFalseWrongToken() {
+        Config cfg = authCfg().webhookBearerToken("tok123").build();
+        assertFalse(Webhooks.verifyWebhook("{}", Map.of("Authorization", "Bearer nope"), cfg));
+    }
+
+    @Test
+    void verifyBearerFalseMissingHeader() {
+        Config cfg = authCfg().webhookBearerToken("tok123").build();
+        assertFalse(Webhooks.verifyWebhook("{}", Map.of(), cfg));
+    }
+
+    @Test
+    void verifyBasicTrue() {
+        Config cfg = authCfg().webhookBasic(Map.of("username", "u", "password", "p")).build();
+        String token = java.util.Base64.getEncoder().encodeToString("u:p".getBytes(StandardCharsets.UTF_8));
+        assertTrue(Webhooks.verifyWebhook("{}", Map.of("Authorization", "Basic " + token), cfg));
+    }
+
+    @Test
+    void verifyBasicFalseWrongPassword() {
+        Config cfg = authCfg().webhookBasic(Map.of("username", "u", "password", "p")).build();
+        String bad = java.util.Base64.getEncoder().encodeToString("u:wrong".getBytes(StandardCharsets.UTF_8));
+        assertFalse(Webhooks.verifyWebhook("{}", Map.of("Authorization", "Basic " + bad), cfg));
+    }
+
+    @Test
+    void verifyHeaderTrueCaseInsensitiveName() {
+        Config cfg = authCfg().webhookHeader(Map.of("name", "X-My-Auth", "value", "sekret")).build();
+        assertTrue(Webhooks.verifyWebhook("{}", Map.of("x-my-auth", "sekret"), cfg));
+    }
+
+    @Test
+    void verifyHeaderFalseWrongValue() {
+        Config cfg = authCfg().webhookHeader(Map.of("name", "X-My-Auth", "value", "sekret")).build();
+        assertFalse(Webhooks.verifyWebhook("{}", Map.of("X-My-Auth", "nope"), cfg));
+    }
+
+    @Test
+    void verifyNoneAlwaysTrue() {
+        Config cfg = authCfg().webhookAuthNone(true).build();
+        assertTrue(Webhooks.verifyWebhook("anything at all", Map.of(), cfg));
+    }
+
+    @Test
+    void verifyNoMethodConfiguredFalse() {
+        Config cfg = authCfg().build();
+        assertFalse(Webhooks.verifyWebhook("{}", Map.of("Authorization", "Bearer x"), cfg));
+    }
+
+    @Test
+    void configRejectsTwoAuthMethods(@TempDir Path tmp) throws Exception {
+        Map<String, Object> data = fullData(tmp, "webhook_secret", "h");
+        data.put("webhook_bearer_token", "b");
+        assertThrows(ConfigException.class, () -> Config.build(data));
+    }
+
+    @Test
+    void configRejectsBearerPlusNone(@TempDir Path tmp) throws Exception {
+        Map<String, Object> data = fullData(tmp, "webhook_bearer_token", "b");
+        data.put("webhook_auth_none", true);
+        assertThrows(ConfigException.class, () -> Config.build(data));
+    }
+
+    @Test
+    void configBasicRequiresBothFields(@TempDir Path tmp) throws Exception {
+        Map<String, Object> data = fullData(tmp, "webhook_basic", Map.of("username", "u"));
+        assertThrows(ConfigException.class, () -> Config.build(data));
+    }
+
+    @Test
+    void configHeaderRequiresBothFields(@TempDir Path tmp) throws Exception {
+        Map<String, Object> data = fullData(tmp, "webhook_header", Map.of("name", "X-H"));
+        assertThrows(ConfigException.class, () -> Config.build(data));
+    }
+
+    @Test
+    void configSingleMethodOkAndMethodName(@TempDir Path tmp) throws Exception {
+        Config cfg = Config.build(fullData(tmp, "webhook_bearer_token", "b"));
+        assertEquals("bearer", cfg.webhookAuthMethod());
+        Config cfg2 = Config.build(fullData(tmp, "webhook_secret", "h"));
+        assertEquals("hmac", cfg2.webhookAuthMethod());
+        Config cfg3 = Config.build(fullData(tmp, "webhook_auth_none", true));
+        assertEquals("none", cfg3.webhookAuthMethod());
+    }
 }
