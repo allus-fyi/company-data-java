@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    allus company-data SDK — Java port.
+
+    Package: fyi.allme.allus.companydata. Published as a Maven Central JAR.
+    Crypto: SunJCE for RSA-OAEP-SHA256 (explicit OAEPParameterSpec to pin MGF1
+    to SHA-256) + AES-256-GCM; BouncyCastle to read the PBES2 (PBKDF2-HMAC-SHA256
+    + AES-256-CBC) encrypted PKCS#8 service PEM. JSON via Jackson; XML via the
+    JDK DocumentBuilder hardened against XXE. HTTP via java.net.http.HttpClient.
+  -->
+  <groupId>fyi.allme.allus</groupId>
+  <artifactId>company-data</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>allus-company-data</name>
+  <description>
+    The Java SDK for the allus company-data API. Point it at a JSON config file
+    and it hands back typed, plaintext, your-slug-keyed conclusions with
+    transparent hybrid decryption (zero-knowledge: the platform only ever holds
+    ciphertext).
+  </description>
+  <url>https://github.com/allus/company-data-java</url>
+
+  <licenses>
+    <license>
+      <name>Proprietary</name>
+    </license>
+  </licenses>
+
+  <scm>
+    <connection>scm:git:https://github.com/allus/company-data-java.git</connection>
+    <developerConnection>scm:git:git@github.com:allus/company-data-java.git</developerConnection>
+    <url>https://github.com/allus/company-data-java</url>
+  </scm>
+
+  <developers>
+    <developer>
+      <name>allus</name>
+      <organization>allme.fyi</organization>
+      <organizationUrl>https://allme.fyi</organizationUrl>
+    </developer>
+  </developers>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <jackson.version>2.18.2</jackson.version>
+    <bouncycastle.version>1.79</bouncycastle.version>
+    <junit.version>5.11.4</junit.version>
+  </properties>
+
+  <dependencies>
+    <!-- JSON parsing / serialization. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
+    <!--
+      BouncyCastle reads the PBES2 (PBKDF2-HMAC-SHA256 + AES-256-CBC, 100k iters)
+      encrypted PKCS#8 PEM that the portal serves. Pure-JDK PKCS#8 decryption of
+      this profile is fiddly; bcpkix cleanly handles it via
+      JceOpenSSLPKCS8DecryptorProviderBuilder.
+    -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
+    </dependency>
+
+    <!-- Tests. -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+      </plugin>
+      <!-- Publishes to Maven Central via the Central Portal during `deploy` (no-op for test/package). -->
+      <plugin>
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
+        <version>0.7.0</version>
+        <extensions>true</extensions>
+        <configuration>
+          <publishingServerId>central</publishingServerId>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- `mvn -P release deploy` attaches sources + javadoc and GPG-signs them (Maven Central requirements). -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals><goal>jar-no-fork</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.11.2</version>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
