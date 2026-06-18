@@ -29,7 +29,9 @@
 
   <licenses>
     <license>
-      <name>Proprietary</name>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
     </license>
   </licenses>
 
