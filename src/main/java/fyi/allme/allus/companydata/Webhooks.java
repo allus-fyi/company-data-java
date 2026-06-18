@@ -83,16 +83,61 @@ public final class Webhooks {
     // ── verify ─────────────────────────────────────────────────────────────────
 
     /**
-     * Verify the {@code X-Allus-Signature} HMAC over the raw body.
+     * Verify a webhook against the SINGLE configured auth method.
      *
-     * <p>Reads {@code X-Allus-Webhook-Id}, looks up that webhook's HMAC secret in
-     * config (falling back to the single-webhook shortcut), recomputes
-     * {@code HMAC-SHA256(rawBody, secret)} as hex, and constant-time-compares it to
-     * the {@code X-Allus-Signature} header. Returns {@code false} on a missing
-     * signature, unknown/unconfigured webhook id, or mismatch — never raises for a
-     * bad signature (that is {@link #handleWebhook}'s job).
+     * <p>Mirrors the platform's per-webhook delivery auth (one method per webhook):
+     * <ul>
+     *   <li>{@code hmac}   — recompute {@code HMAC-SHA256(rawBody, secret)} (secret selected
+     *       by {@code X-Allus-Webhook-Id}) and constant-time-compare to {@code X-Allus-Signature};</li>
+     *   <li>{@code bearer} — {@code Authorization} equals {@code Bearer <token>};</li>
+     *   <li>{@code basic}  — {@code Authorization} equals {@code Basic <base64(user:pass)>};</li>
+     *   <li>{@code header} — the configured custom header equals the configured value;</li>
+     *   <li>{@code none}   — always {@code true} (explicit opt-out).</li>
+     * </ul>
+     *
+     * <p>All comparisons are constant-time. Returns {@code false} on a missing/mismatched
+     * credential, or when no method is configured — never raises for a bad credential
+     * (that is {@link #handleWebhook}'s job). Which method is used is decided entirely by
+     * config ({@link Config#webhookAuthMethod()}); config loading guarantees at most one
+     * is set.
      */
     public static boolean verifyWebhook(Object rawBody, Map<String, ?> headers, Config config) {
+        String method = config.webhookAuthMethod();
+        if (method == null) {
+            return false;
+        }
+        if (method.equals("none")) {
+            return true;
+        }
+
+        if (method.equals("bearer")) {
+            String got = header(headers, "authorization");
+            if (got == null) {
+                return false;
+            }
+            String token = config.webhookBearerToken() != null ? config.webhookBearerToken() : "";
+            return constantTimeEquals(got, "Bearer " + token);
+        }
+
+        if (method.equals("basic")) {
+            String got = header(headers, "authorization");
+            if (got == null) {
+                return false;
+            }
+            String creds = config.webhookBasic().get("username") + ":" + config.webhookBasic().get("password");
+            String token = Base64.getEncoder().encodeToString(creds.getBytes(StandardCharsets.UTF_8));
+            return constantTimeEquals(got, "Basic " + token);
+        }
+
+        if (method.equals("header")) {
+            String got = header(headers, config.webhookHeader().get("name"));
+            if (got == null) {
+                return false;
+            }
+            return constantTimeEquals(got, config.webhookHeader().get("value"));
+        }
+
+        // method == "hmac"
         byte[] body = asBytes(rawBody);
         String signature = header(headers, HDR_SIGNATURE);
         if (signature == null || signature.isEmpty()) {
@@ -108,6 +153,12 @@ public final class Webhooks {
         byte[] a = expected.getBytes(StandardCharsets.US_ASCII);
         byte[] b = signature.strip().toLowerCase().getBytes(StandardCharsets.US_ASCII);
         return MessageDigest.isEqual(a, b);
+    }
+
+    /** Timing-safe string comparison (different lengths return false). */
+    private static boolean constantTimeEquals(String a, String b) {
+        return MessageDigest.isEqual(
+            a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
     }
 
     private static String hmacSha256Hex(String secret, byte[] body) {
