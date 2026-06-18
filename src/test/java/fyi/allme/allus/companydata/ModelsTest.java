@@ -310,4 +310,27 @@ class ModelsTest {
         assertInstanceOf(OffsetDateTime.class, logs.get(0).at());
         assertInstanceOf(OffsetDateTime.class, logs.get(1).at()); // created_at fallback
     }
+
+    /** Every change event carries the person's profile share_code (nullable). */
+    @Test
+    void changeIncludesShareCode() {
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        Map<String, Object> withCode = new LinkedHashMap<>();
+        withCode.put("id", "chg-1");
+        withCode.put("event", "connection_created");
+        withCode.put("person_user_id", "person-1");
+        withCode.put("share_code", "ABC123");
+        withCode.put("at", "2026-06-17T12:00:00Z");
+        Map<String, Object> noCode = new LinkedHashMap<>();
+        noCode.put("id", "chg-2");
+        noCode.put("event", "connection_created");
+        noCode.put("person_user_id", "person-2"); // no share_code -> null
+        noCode.put("at", "2026-06-17T12:00:00Z");
+
+        List<Change> changes = Change.listFromApi(
+            Map.of("changes", List.of(withCode, noCode)), deps);
+
+        assertEquals("ABC123", changes.get(0).shareCode());
+        assertNull(changes.get(1).shareCode());
+    }
 }
