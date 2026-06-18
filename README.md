@@ -34,7 +34,7 @@ Deeper reference pages live in [`docs/`](docs/):
 <dependency>
   <groupId>fyi.allme.allus</groupId>
   <artifactId>company-data</artifactId>
-  <version>0.0.3</version>
+  <version>0.0.4</version>
 </dependency>
 ```
 
@@ -88,14 +88,14 @@ Requires **Java 21+**. Maven Central coordinates:
 <dependency>
   <groupId>fyi.allme.allus</groupId>
   <artifactId>company-data</artifactId>
-  <version>0.0.3</version>
+  <version>0.0.4</version>
 </dependency>
 ```
 
 Gradle:
 
 ```groovy
-implementation 'fyi.allme.allus:company-data:0.0.3'
+implementation 'fyi.allme.allus:company-data:0.0.4'
 ```
 
 Everything is in the package `fyi.allme.allus.companydata`:
