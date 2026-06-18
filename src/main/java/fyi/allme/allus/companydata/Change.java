@@ -13,14 +13,17 @@ import java.util.Map;
  *
  * <p>{@link #id()} is the stable server change-row id (the pump dedupes on it
  * after a crash/replay); {@link #at()} is the change time (there is
- * NO separate updatedAt on a change). {@link #slug()}/{@link #value()}/{@link #live()}
- * are present only on {@code field_updated} (connection/consent events carry no
- * slot/value). {@link #live()} is {@code null} when absent.
+ * NO separate updatedAt on a change). {@link #shareCode()} is the person's
+ * profile share code, present on every event (may be {@code null}).
+ * {@link #slug()}/{@link #value()}/{@link #live()} are present only on
+ * {@code field_updated} (connection/consent events carry no slot/value).
+ * {@link #live()} is {@code null} when absent.
  */
 public record Change(
     String id,
     String event,
     String personId,
+    String shareCode,
     String slug,
     Object value,
     Boolean live,
@@ -43,7 +46,8 @@ public record Change(
             Parse.str(obj.get("person_user_id")), Parse.str(obj.get("person_id")));
 
         return new Change(
-            Parse.str(obj.get("id")), event, personId, slug, value, live,
+            Parse.str(obj.get("id")), event, personId,
+            Parse.str(obj.get("share_code")), slug, value, live,
             Parse.isoDateTime(obj.get("at")), obj);
     }
 
