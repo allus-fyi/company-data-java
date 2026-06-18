@@ -25,7 +25,7 @@
     transparent hybrid decryption (zero-knowledge: the platform only ever holds
     ciphertext).
   </description>
-  <url>https://github.com/allus/company-data-java</url>
+  <url>https://github.com/allus-fyi/company-data-java</url>
 
   <licenses>
     <license>
@@ -36,9 +36,9 @@
   </licenses>
 
   <scm>
-    <connection>scm:git:https://github.com/allus/company-data-java.git</connection>
-    <developerConnection>scm:git:git@github.com:allus/company-data-java.git</developerConnection>
-    <url>https://github.com/allus/company-data-java</url>
+    <connection>scm:git:https://github.com/allus-fyi/company-data-java.git</connection>
+    <developerConnection>scm:git:git@github.com:allus-fyi/company-data-java.git</developerConnection>
+    <url>https://github.com/allus-fyi/company-data-java</url>
   </scm>
 
   <developers>
