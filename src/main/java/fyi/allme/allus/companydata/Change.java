@@ -30,6 +30,7 @@ public record Change(
     Boolean live,
     String documentId,
     String status,
+    String action,   // set on document_status_changed for a contract: signed | accepted | cancelled
     OffsetDateTime at,
     Map<String, Object> raw
 ) {
@@ -48,14 +49,16 @@ public record Change(
         String personId = firstNonNull(
             Parse.str(obj.get("person_user_id")), Parse.str(obj.get("person_id")));
 
-        // document_status_changed carries a document_id + new status (no slot/value).
+        // document_status_changed carries a document_id + new status (+ a contract action; no slot/value).
         String documentId = Parse.str(obj.get("document_id"));
-        String status = "document_status_changed".equals(event) ? Parse.str(obj.get("status")) : null;
+        boolean isDocStatus = "document_status_changed".equals(event);
+        String status = isDocStatus ? Parse.str(obj.get("status")) : null;
+        String action = isDocStatus ? Parse.str(obj.get("action")) : null;
 
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), slug, value, live,
-            documentId, status,
+            documentId, status, action,
             Parse.isoDateTime(obj.get("at")), obj);
     }
 

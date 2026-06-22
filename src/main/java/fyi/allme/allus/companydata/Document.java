@@ -37,6 +37,9 @@ public record Document(
     Map<String, Object> metadata,
     OffsetDateTime createdAt,
     OffsetDateTime updatedAt,
+    boolean requiresSignature,   // contract: the person must sign
+    boolean requiresAcceptance,  // contract: the person must accept
+    List<Map<String, Object>> signatures,  // contract sign/accept audit trail (company-side reads only)
     Function<Object, String> decryptValue,  // closure over the service key; never a key arg
     Map<String, Object> raw
 ) {
@@ -82,6 +85,14 @@ public record Document(
     static Document fromApi(Map<String, Object> obj, Function<Object, String> decryptValue) {
         Object meta = obj.get("metadata");
         Map<String, Object> metadata = (meta instanceof Map<?, ?> m) ? (Map<String, Object>) m : null;
+        List<Map<String, Object>> signatures = new java.util.ArrayList<>();
+        if (obj.get("signatures") instanceof List<?> sigs) {
+            for (Object s : sigs) {
+                if (s instanceof Map<?, ?> sm) {
+                    signatures.add((Map<String, Object>) sm);
+                }
+            }
+        }
         return new Document(
             Parse.str(obj.get("id")),
             Parse.str(obj.get("kind")),
@@ -94,6 +105,9 @@ public record Document(
             metadata,
             Parse.isoDateTime(obj.get("created_at")),
             Parse.isoDateTime(obj.get("updated_at")),
+            Parse.bool(obj.get("requires_signature")),
+            Parse.bool(obj.get("requires_acceptance")),
+            signatures,
             decryptValue,
             obj);
     }
