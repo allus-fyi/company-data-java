@@ -30,4 +30,13 @@ public interface Transport {
 
     /** GET with query params + headers. */
     Response get(String url, Map<String, String> params, Map<String, String> headers);
+
+    /**
+     * Send a body verb (POST/PUT/DELETE) with a raw byte body + headers.
+     *
+     * <p>The {@code Http} façade serializes JSON bodies and sets the
+     * {@code Content-Type} header before calling this; this just sends bytes. A
+     * {@code null} {@code body} means no request body (e.g. a bare DELETE).
+     */
+    Response send(String method, String url, byte[] body, Map<String, String> headers);
 }

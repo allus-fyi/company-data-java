@@ -333,4 +333,60 @@ class ModelsTest {
         assertEquals("ABC123", changes.get(0).shareCode());
         assertNull(changes.get(1).shareCode());
     }
+
+    // ── document_status_changed change + Document model ─────────────────────────
+
+    @Test
+    void changeDocumentStatusChangedParses() {
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("id", "chg-doc");
+        ev.put("event", "document_status_changed");
+        ev.put("person_user_id", "u-1");
+        ev.put("share_code", "ABC123");
+        ev.put("document_id", "doc-9");
+        ev.put("status", "ended");
+        ev.put("at", "2026-06-22T10:00:00Z");
+
+        Change chg = Change.listFromApi(Map.of("changes", List.of(ev)), deps).get(0);
+        assertEquals("document_status_changed", chg.event());
+        assertEquals("doc-9", chg.documentId());
+        assertEquals("ended", chg.status());
+        assertEquals("u-1", chg.personId());
+        assertEquals("ABC123", chg.shareCode());
+        assertNull(chg.slug());
+        assertNull(chg.value());
+        assertNull(chg.live());
+    }
+
+    @Test
+    void documentModelBroadcastJsonIsPlaintext() {
+        Map<String, Object> obj = new LinkedHashMap<>();
+        obj.put("id", "d1");
+        obj.put("kind", "document");
+        obj.put("name", "Terms");
+        obj.put("status", "active");
+        obj.put("payload_kind", "json");
+        obj.put("is_private", false);
+        obj.put("value", Map.of("v", 1));
+        obj.put("metadata", Map.of());
+        Document doc = Document.fromApi(obj, null);
+        assertEquals(Map.of("v", 1), doc.json()); // no decrypt needed
+    }
+
+    @Test
+    void documentModelPerPersonJsonDecrypts() {
+        Map<String, Object> wrapper = TestCrypto.encryptForKey(publicKey, "{\"plan\":\"pro\"}");
+        Map<String, Object> obj = new LinkedHashMap<>();
+        obj.put("id", "d2");
+        obj.put("kind", "document");
+        obj.put("name", "PP");
+        obj.put("status", "active");
+        obj.put("payload_kind", "json");
+        obj.put("is_private", true);
+        obj.put("value", wrapper);
+        obj.put("metadata", Map.of());
+        Document doc = Document.fromApi(obj, decryptValue);
+        assertEquals(Map.of("plan", "pro"), doc.json()); // decrypted via injected decrypt
+    }
 }

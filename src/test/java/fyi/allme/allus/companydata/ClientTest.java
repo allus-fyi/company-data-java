@@ -1,6 +1,7 @@
 package fyi.allme.allus.companydata;
 
 import fyi.allme.allus.companydata.internal.Transport;
+import fyi.allme.allus.companydata.internal.Transport.Response;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,9 +17,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -62,16 +65,34 @@ class ClientTest {
             .build();
     }
 
-    /** A Transport that routes GETs through a function, POSTs always return the token. */
+    /**
+     * A Transport that routes GETs through a function and POST/PUT/DELETE bodies through
+     * an optional write router; the OAuth token POST (form) always returns the token.
+     */
     static final class RoutingTransport implements Transport {
         final BiFunction<String, Map<String, String>, Response> router;
+        final WriteRouter writeRouter;
         final List<GetCall> gets = new ArrayList<>();
+        final List<WriteCall> writes = new ArrayList<>();
 
         record GetCall(String url, Map<String, String> params) {
         }
 
+        /** A recorded write: method, url, and the body parsed back to a Map (json) or raw bytes. */
+        record WriteCall(String method, String url, Object jsonBody, byte[] data) {
+        }
+
+        interface WriteRouter {
+            Response apply(String method, String url, Object jsonBody, byte[] data);
+        }
+
         RoutingTransport(BiFunction<String, Map<String, String>, Response> router) {
+            this(router, null);
+        }
+
+        RoutingTransport(BiFunction<String, Map<String, String>, Response> router, WriteRouter writeRouter) {
             this.router = router;
+            this.writeRouter = writeRouter;
         }
 
         @Override
@@ -83,6 +104,28 @@ class ClientTest {
         public Response get(String url, Map<String, String> params, Map<String, String> headers) {
             gets.add(new GetCall(url, params));
             return router.apply(url, params);
+        }
+
+        @Override
+        public Response send(String method, String url, byte[] body, Map<String, String> headers) {
+            // The Http façade serializes JSON bodies; reflect that back to the router as
+            // a parsed Map when the content type was JSON, AND always expose the raw bytes
+            // (a per-person file upload is a JSON wrapper the test inspects as bytes).
+            Object jsonBody = null;
+            boolean isJson = headers != null && "application/json".equals(headers.get("Content-Type"));
+            if (body != null && isJson) {
+                try {
+                    jsonBody = fyi.allme.allus.companydata.internal.Json.parse(
+                        new String(body, java.nio.charset.StandardCharsets.UTF_8));
+                } catch (Exception ignored) {
+                    jsonBody = null;
+                }
+            }
+            writes.add(new WriteCall(method, url, jsonBody, body));
+            if (writeRouter == null) {
+                return FakeTransport.json(200, "{}");
+            }
+            return writeRouter.apply(method, url, jsonBody, body);
         }
     }
 
@@ -358,5 +401,207 @@ class ClientTest {
             "service_private_key", pem.toString(), "key_passphrase", "WRONG",
             "cache_dir", tmp.resolve("cache").toString())), StandardCharsets.UTF_8);
         assertThrows(ConfigException.class, () -> Client.fromConfig(cfg.toString()));
+    }
+
+    // ── company documents (write) ───────────────────────────────────────────────
+
+    /** The vector key's PUBLIC half as base64 SPKI/DER (what GET /api/keys returns). */
+    private static String vectorPubSpkiB64() {
+        return TestCrypto.spkiB64(publicKey);
+    }
+
+    private static BiFunction<String, Map<String, String>, Response> noGet() {
+        return (url, params) -> {
+            throw new AssertionError("unexpected GET " + url);
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String decryptVectorWrapper(Object wrapper) {
+        return Crypto.decrypt(Wrapper.of(wrapper), privateKey);
+    }
+
+    @Test
+    void createDocumentBroadcastJsonIsPlaintext(@TempDir Path tmp) throws Exception {
+        Object[] posted = new Object[1];
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            assertEquals("POST", method);
+            assertTrue(url.endsWith("/documents"));
+            posted[0] = jsonBody;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> b = (Map<String, Object>) jsonBody;
+            return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                "id", "d1", "kind", "document", "name", "Terms",
+                "status", "active", "payload_kind", "json", "is_private", false,
+                "value", b.get("value"))));
+        };
+        RoutingTransport t = new RoutingTransport(noGet(), wr);
+        Client client = new Client(config(tmp), t);
+        Document doc = client.createDocument(Client.CreateDocumentRequest.builder()
+            .name("Terms").payloadKind("json")
+            .jsonValue(Map.of("url", "x", "v", "1")).status("active"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) posted[0];
+        assertNull(body.get("target"));
+        assertEquals(Map.of("url", "x", "v", "1"), body.get("value")); // plaintext, no _enc
+        assertEquals(false, body.get("is_private"));
+        assertEquals("d1", doc.id());
+        assertEquals("active", doc.status());
+    }
+
+    @Test
+    void createDocumentPerPersonEncryptsForBothPrivacy(@TempDir Path tmp) throws Exception {
+        String spki = vectorPubSpkiB64();
+        for (boolean isPrivate : new boolean[]{false, true}) {
+            int[] keysFetched = {0};
+            BiFunction<String, Map<String, String>, Response> get = (url, params) -> {
+                assertTrue(url.endsWith("/api/keys/ABC123"));
+                keysFetched[0]++;
+                return FakeTransport.json(200, fyi.allme.allus.companydata.internal.Json.write(
+                    Map.of("public_key", spki)));
+            };
+            Object[] captured = new Object[1];
+            RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+                captured[0] = jsonBody;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> b = (Map<String, Object>) jsonBody;
+                return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                    "id", "d2", "kind", "document", "name", "PP",
+                    "status", "active", "payload_kind", "json", "is_private", isPrivate,
+                    "value", b.get("value"))));
+            };
+            RoutingTransport t = new RoutingTransport(get, wr);
+            Client client = new Client(config(tmp), t);
+            Document doc = client.createDocument(Client.CreateDocumentRequest.builder()
+                .name("PP").payloadKind("json").jsonValue(Map.of("plan", "pro"))
+                .connectionId("conn-1").shareCode("ABC123").isPrivate(isPrivate));
+
+            assertEquals(1, keysFetched[0]); // fetched the recipient key
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = (Map<String, Object>) captured[0];
+            @SuppressWarnings("unchecked")
+            Map<String, Object> val = (Map<String, Object>) body.get("value");
+            assertEquals(1, ((Number) val.get("_enc")).intValue()); // ENCRYPTED, any is_private
+            assertTrue(val.containsKey("k") && val.containsKey("iv") && val.containsKey("d"));
+            assertEquals(Map.of("connection_id", "conn-1"), body.get("target"));
+            assertEquals(isPrivate, body.get("is_private"));
+            // round-trips through the SDK's own decrypt → the original plaintext
+            assertEquals(Map.of("plan", "pro"),
+                fyi.allme.allus.companydata.internal.Json.parse(decryptVectorWrapper(val)));
+            assertEquals("d2", doc.id());
+        }
+    }
+
+    @Test
+    void createDocumentPrivateBroadcastThrows(@TempDir Path tmp) throws Exception {
+        RoutingTransport t = new RoutingTransport(noGet(), (m, u, j, d) -> {
+            throw new AssertionError("should not POST");
+        });
+        Client client = new Client(config(tmp), t);
+        assertThrows(ConfigException.class, () -> client.createDocument(
+            Client.CreateDocumentRequest.builder()
+                .name("x").payloadKind("json").jsonValue(Map.of("a", 1)).isPrivate(true)));
+    }
+
+    @Test
+    void createDocumentFileBroadcastUploadsRawBytes(@TempDir Path tmp) throws Exception {
+        List<RoutingTransport.WriteCall> calls = new ArrayList<>();
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            calls.add(new RoutingTransport.WriteCall(method, url, jsonBody, data));
+            if (url.endsWith("/documents")) {
+                return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                    "id", "f1", "kind", "document", "name", "C",
+                    "status", "active", "payload_kind", "file", "is_private", false,
+                    "value", Map.of("_pending", true))));
+            }
+            assertTrue(url.endsWith("/documents/f1/file"));
+            return FakeTransport.json(200, "{\"id\":\"f1\"}");
+        };
+        RoutingTransport t = new RoutingTransport(noGet(), wr);
+        Client client = new Client(config(tmp), t);
+        client.createDocument(Client.CreateDocumentRequest.builder()
+            .name("C").payloadKind("file")
+            .fileBytes("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8)).fileMime("application/pdf"));
+
+        assertTrue(calls.get(0).url().endsWith("/documents"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body0 = (Map<String, Object>) calls.get(0).jsonBody();
+        assertNull(body0.get("target"));
+        assertTrue(calls.get(1).url().endsWith("/documents/f1/file"));
+        assertArrayEquals("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8), calls.get(1).data()); // raw bytes
+    }
+
+    @Test
+    void createDocumentFilePerPersonUploadsWrapperBytes(@TempDir Path tmp) throws Exception {
+        String spki = vectorPubSpkiB64();
+        List<RoutingTransport.WriteCall> calls = new ArrayList<>();
+        BiFunction<String, Map<String, String>, Response> get = (url, params) ->
+            FakeTransport.json(200, fyi.allme.allus.companydata.internal.Json.write(Map.of("public_key", spki)));
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            calls.add(new RoutingTransport.WriteCall(method, url, jsonBody, data));
+            if (url.endsWith("/documents")) {
+                return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                    "id", "f2", "kind", "document", "name", "C",
+                    "status", "active", "payload_kind", "file", "is_private", true,
+                    "value", Map.of("_pending", true))));
+            }
+            return FakeTransport.json(200, "{\"id\":\"f2\"}");
+        };
+        RoutingTransport t = new RoutingTransport(get, wr);
+        Client client = new Client(config(tmp), t);
+        client.createDocument(Client.CreateDocumentRequest.builder()
+            .name("C").payloadKind("file").fileBytes("hello-bytes".getBytes(StandardCharsets.UTF_8))
+            .fileMime("application/pdf").personUserId("u1").shareCode("ABC123").isPrivate(true));
+
+        byte[] upload = calls.get(1).data();
+        assertTrue(upload != null && upload.length > 0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> wrapper = (Map<String, Object>) fyi.allme.allus.companydata.internal.Json.parse(
+            new String(upload, StandardCharsets.UTF_8));
+        assertEquals(1, ((Number) wrapper.get("_enc")).intValue()); // ciphertext wrapper bytes, not raw file
+        // decrypt → the {"file":"data:...base64,..."} envelope holding the original bytes
+        @SuppressWarnings("unchecked")
+        Map<String, Object> env = (Map<String, Object>) fyi.allme.allus.companydata.internal.Json.parse(
+            decryptVectorWrapper(wrapper));
+        String file = (String) env.get("file");
+        assertTrue(file.startsWith("data:application/pdf;base64,"));
+        assertArrayEquals("hello-bytes".getBytes(StandardCharsets.UTF_8),
+            java.util.Base64.getDecoder().decode(file.split(",", 2)[1]));
+    }
+
+    @Test
+    void documentVerbsHitRightPath(@TempDir Path tmp) throws Exception {
+        List<Object[]> seen = new ArrayList<>();
+        BiFunction<String, Map<String, String>, Response> get = (url, params) -> {
+            if (url.endsWith("/documents")) {
+                return FakeTransport.json(200, "{\"total\":0,\"items\":[]}");
+            }
+            if (url.contains("/documents/d9")) {
+                return FakeTransport.json(200,
+                    "{\"id\":\"d9\",\"payload_kind\":\"json\",\"is_private\":false,\"value\":{\"a\":1}}");
+            }
+            throw new AssertionError("unexpected GET " + url);
+        };
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            seen.add(new Object[]{method, url, jsonBody});
+            return FakeTransport.json(200,
+                "{\"id\":\"d9\",\"payload_kind\":\"json\",\"is_private\":false,\"value\":{\"a\":1},\"status\":\"ended\"}");
+        };
+        RoutingTransport t = new RoutingTransport(get, wr);
+        Client client = new Client(config(tmp), t);
+
+        assertTrue(client.listDocuments(null, "active", 100, 0).isEmpty());
+        assertEquals("d9", client.document("d9").id());
+        client.updateDocumentStatus("d9", "ended");
+        client.updateDocumentMetadata("d9", null, "renamed", null);
+        client.deleteDocument("d9");
+
+        List<String[]> methods = seen.stream()
+            .map(s -> new String[]{(String) s[0], ((String) s[1]).split("/api/company-data")[1]})
+            .toList();
+        long puts = methods.stream().filter(m -> m[0].equals("PUT") && m[1].equals("/documents/d9")).count();
+        assertEquals(2, puts);
+        assertTrue(methods.stream().anyMatch(m -> m[0].equals("DELETE") && m[1].equals("/documents/d9")));
     }
 }

@@ -15,6 +15,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The cross-language crypto-parity GATE.
@@ -158,6 +159,34 @@ class CryptoVectorTest {
     void parseEnvelopeWithoutFullOrFileRaises() {
         assertThrows(DecryptException.class, () ->
             BinaryHandle.parseEnvelopeBytes("{\"thumb\":\"x\"}"));
+    }
+
+    // ── encryptForPublicKey round-trips through decrypt ──────────────────────
+
+    @Test
+    void encryptForPublicKeyRoundTripsThroughDecrypt() throws Exception {
+        java.security.KeyPairGenerator g = java.security.KeyPairGenerator.getInstance("RSA");
+        g.initialize(2048);
+        java.security.KeyPair kp = g.generateKeyPair();
+        // Encode the public key as X.509/base64 (the platform's GET /api/keys shape).
+        String spkiB64 = Base64.getEncoder().encodeToString(kp.getPublic().getEncoded());
+        java.security.interfaces.RSAPublicKey pub = Crypto.loadPublicKey(spkiB64);
+        java.security.interfaces.RSAPrivateKey priv =
+            (java.security.interfaces.RSAPrivateKey) kp.getPrivate();
+
+        for (String pt : new String[]{"hello", "{\"a\":1}", "with-üñîçödé"}) {
+            Map<String, Object> wrapper = Crypto.encryptForPublicKey(pt, pub);
+            assertEquals(1, ((Number) wrapper.get("_enc")).intValue());
+            assertTrue(wrapper.containsKey("k") && wrapper.containsKey("iv") && wrapper.containsKey("d"));
+            assertEquals(pt, Crypto.decrypt(Wrapper.of(wrapper), priv));
+        }
+    }
+
+    @Test
+    void loadPublicKeyRejectsGarbage() {
+        assertThrows(DecryptException.class, () -> Crypto.loadPublicKey("not-base64!!"));
+        assertThrows(DecryptException.class, () ->
+            Crypto.loadPublicKey(Base64.getEncoder().encodeToString("not a spki key".getBytes(StandardCharsets.UTF_8))));
     }
 
     // ── BinaryHandle.save() atomic ──────────────────────────────────────────

@@ -16,10 +16,16 @@ import java.util.Map;
 final class FakeTransport implements Transport {
     final Deque<Response> postResponses = new ArrayDeque<>();
     final Deque<Response> getResponses = new ArrayDeque<>();
+    final Deque<Response> sendResponses = new ArrayDeque<>();
     final List<Map<String, String>> posts = new ArrayList<>();
     final List<GetCall> gets = new ArrayList<>();
+    final List<SendCall> sends = new ArrayList<>();
 
     record GetCall(String url, Map<String, String> params, Map<String, String> headers) {
+    }
+
+    /** A recorded POST/PUT/DELETE body call (body is the raw bytes; null = no body). */
+    record SendCall(String method, String url, byte[] body, Map<String, String> headers) {
     }
 
     @Override
@@ -34,6 +40,12 @@ final class FakeTransport implements Transport {
     public Response get(String url, Map<String, String> params, Map<String, String> headers) {
         gets.add(new GetCall(url, params, headers));
         return getResponses.pop();
+    }
+
+    @Override
+    public Response send(String method, String url, byte[] body, Map<String, String> headers) {
+        sends.add(new SendCall(method, url, body, headers));
+        return sendResponses.pop();
     }
 
     // ── response builders ───────────────────────────────────────────────────

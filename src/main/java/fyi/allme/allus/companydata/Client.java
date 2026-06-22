@@ -1,6 +1,7 @@
 package fyi.allme.allus.companydata;
 
 import fyi.allme.allus.companydata.internal.Http;
+import fyi.allme.allus.companydata.internal.Json;
 import fyi.allme.allus.companydata.internal.ModelDeps;
 import fyi.allme.allus.companydata.internal.Transport;
 
@@ -49,6 +50,8 @@ public final class Client {
     private static final String CHANGES = BASE + "/changes";
     private static final String REQUEST_FIELDS = BASE + "/request-fields";
     private static final String LOGS = BASE + "/logs";
+    private static final String DOCUMENTS = BASE + "/documents";
+    private static final String KEYS = "/api/keys";
 
     private static final int DEFAULT_CONN_PAGE = 100;
     private static final int CONN_MAX_429_BACKOFFS = 5;
@@ -66,6 +69,10 @@ public final class Client {
     private List<RequestField> requestFields;
     private Map<String, String> typeBySlug = new LinkedHashMap<>();
     private Pump pump;
+
+    // Recipient RSA public keys (by share_code) — cached for per-person document
+    // encryption. A public key is immutable + not a secret (fetched live, never configured).
+    private final Map<String, java.security.interfaces.RSAPublicKey> pubkeyCache = new LinkedHashMap<>();
 
     public Client(Config config) {
         this(config, new Http(config), Logger.getLogger("fyi.allme.allus.companydata.client"), Client::defaultSleep);
@@ -393,7 +400,275 @@ public final class Client {
         return Webhooks.handleWebhook(rawBody, headers, config, deps, accountKey);
     }
 
+    // ── company documents (write) ───────────────────────────────────────────────
+
+    /** Fetch + cache the recipient RSA public key by share_code ({@code GET /api/keys/{shareCode}}). */
+    @SuppressWarnings("unchecked")
+    private java.security.interfaces.RSAPublicKey recipientPublicKey(String shareCode) {
+        java.security.interfaces.RSAPublicKey cached = pubkeyCache.get(shareCode);
+        if (cached != null) {
+            return cached;
+        }
+        Object body = http.get(KEYS + "/" + shareCode);
+        Object spki = (body instanceof Map<?, ?> m) ? ((Map<String, Object>) m).get("public_key") : null;
+        if (spki == null || String.valueOf(spki).isEmpty()) {
+            throw new ApiException(0, "keys.not_found", "no public_key for share_code " + shareCode);
+        }
+        java.security.interfaces.RSAPublicKey key = Crypto.loadPublicKey(String.valueOf(spki));
+        pubkeyCache.put(shareCode, key);
+        return key;
+    }
+
+    /**
+     * Resolve a target's share_code (the recipient public-key handle). Prefers a
+     * single-connection fetch (carries {@code share_code}); falls back to a connections
+     * scan by {@code user_id}. Pass {@code shareCode} in the request to skip this.
+     */
+    @SuppressWarnings("unchecked")
+    private String resolveShareCode(String connectionId, String personUserId) {
+        if (connectionId != null) {
+            Object body = http.get(CONNECTIONS + "/" + connectionId);
+            Object sc = (body instanceof Map<?, ?> m) ? ((Map<String, Object>) m).get("share_code") : null;
+            if (sc != null && !String.valueOf(sc).isEmpty()) {
+                return String.valueOf(sc);
+            }
+        }
+        if (personUserId != null) {
+            for (Connection conn : connections()) {
+                Map<String, Object> raw = conn.raw() != null ? conn.raw() : Map.of();
+                if (personUserId.equals(raw.get("user_id")) || personUserId.equals(conn.personId())) {
+                    Object sc = raw.get("share_code");
+                    if (sc != null && !String.valueOf(sc).isEmpty()) {
+                        return String.valueOf(sc);
+                    }
+                }
+            }
+        }
+        throw new ConfigException(
+            "could not resolve a share_code for the target — set shareCode() explicitly");
+    }
+
+    /**
+     * Create a company document for a connection / person (PER-PERSON), or BROADCAST
+     * (no target). Build the request with {@link CreateDocumentRequest#builder()}.
+     *
+     * <p>{@code payloadKind='json'} → {@code jsonValue} (object). {@code payloadKind='file'}
+     * → {@code fileBytes} (+ {@code fileMime}).
+     *
+     * <p>Encryption is decided by the TARGET, not by is_private:
+     * <ul>
+     *   <li>PER-PERSON (connectionId/personUserId set) → the value is ALWAYS encrypted
+     *       FOR THE RECIPIENT (shareCode resolved from connectionId/personUserId when not
+     *       given) before it leaves the process — EVERY per-person doc, private or not.
+     *       The server stores ciphertext. NO key argument.</li>
+     *   <li>BROADCAST (no target) → the value is sent PLAINTEXT (you cannot single-key
+     *       encrypt to all of a service's connections). A broadcast MUST be non-private;
+     *       {@code isPrivate=true} therefore requires a per-person target.</li>
+     * </ul>
+     *
+     * <p>is_private is a DISPLAY-ONLY flag passed through to the API — it governs the
+     * recipient device's lock vs decrypt-on-load behaviour, NOT whether the value is
+     * encrypted.
+     */
+    public Document createDocument(CreateDocumentRequest req) {
+        if (!"json".equals(req.payloadKind) && !"file".equals(req.payloadKind)) {
+            throw new ConfigException("payloadKind must be 'json' or 'file'");
+        }
+        Map<String, Object> target = null;
+        if (req.connectionId != null) {
+            target = Map.of("connection_id", req.connectionId);
+        } else if (req.personUserId != null) {
+            target = Map.of("person_user_id", req.personUserId);
+        } // else: broadcast — target stays null
+
+        boolean perPerson = target != null;
+        if (req.isPrivate && !perPerson) {
+            // A plaintext broadcast cannot be locked — is_private needs a per-person target.
+            throw new ConfigException(
+                "isPrivate=true requires a per-person target (broadcast is plaintext)");
+        }
+
+        java.security.interfaces.RSAPublicKey pubkey = null;
+        if (perPerson) {
+            // EVERY per-person doc is encrypted, private or not — fetch the recipient key.
+            String sc = req.shareCode != null
+                ? req.shareCode : resolveShareCode(req.connectionId, req.personUserId);
+            pubkey = recipientPublicKey(sc);
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("kind", req.kind);
+        body.put("name", req.name);
+        body.put("payload_kind", req.payloadKind);
+        body.put("is_private", req.isPrivate);
+        body.put("target", target);
+        if (req.description != null) {
+            body.put("description", req.description);
+        }
+        if (req.metadata != null) {
+            body.put("metadata", req.metadata);
+        }
+        if (req.status != null) {
+            body.put("status", req.status);
+        }
+
+        if ("json".equals(req.payloadKind)) {
+            if (req.jsonValue == null) {
+                throw new ConfigException("jsonValue is required for payloadKind='json'");
+            }
+            body.put("value", perPerson
+                ? Crypto.encryptForPublicKey(Json.write(req.jsonValue), pubkey)
+                : req.jsonValue);
+            Object created = http.post(DOCUMENTS, body);
+            return Document.fromApi(docObj(created), this::decryptValue);
+        }
+
+        // file: create the metadata row first, then upload bytes to /{id}/file.
+        if (req.fileBytes == null) {
+            throw new ConfigException("fileBytes is required for payloadKind='file'");
+        }
+        Object created = http.post(DOCUMENTS, body);
+        Document doc = Document.fromApi(docObj(created), this::decryptValue);
+        if (perPerson) {
+            // Encrypt the file bytes (EVERY per-person doc): wrap the file envelope string,
+            // then send the wrapper JSON as bytes.
+            String envelope = Json.write(Map.of("file", dataUri(req.fileBytes, req.fileMime)));
+            Map<String, Object> wrapper = Crypto.encryptForPublicKey(envelope, pubkey);
+            http.post(DOCUMENTS + "/" + doc.id() + "/file",
+                Json.write(wrapper).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "application/json");
+        } else {
+            // Broadcast — raw plaintext bytes.
+            http.post(DOCUMENTS + "/" + doc.id() + "/file",
+                req.fileBytes,
+                req.fileMime != null ? req.fileMime : "application/octet-stream");
+        }
+        return doc;
+    }
+
+    /**
+     * List this service's documents → {@code List<Document>} (paged; optional
+     * person/status filter).
+     */
+    public List<Document> listDocuments() {
+        return listDocuments(null, null, 100, 0);
+    }
+
+    public List<Document> listDocuments(String personUserId, String status, int limit, int offset) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("limit", String.valueOf(Math.max(1, limit)));
+        params.put("offset", String.valueOf(Math.max(0, offset)));
+        if (personUserId != null) {
+            params.put("person_user_id", personUserId);
+        }
+        if (status != null) {
+            params.put("status", status);
+        }
+        Object body = http.get(DOCUMENTS, params);
+        return Document.listFromApi(body, this::decryptValue);
+    }
+
+    /** Fetch one document by id → {@link Document}. */
+    public Document document(String documentId) {
+        Object body = http.get(DOCUMENTS + "/" + documentId);
+        return Document.fromApi(docObj(body), this::decryptValue);
+    }
+
+    /**
+     * Set a document's lifecycle status
+     * ({@code offering|ready_to_sign|active|active_but_ending|ended}).
+     */
+    public Document updateDocumentStatus(String documentId, String status) {
+        Object body = http.put(DOCUMENTS + "/" + documentId, Map.of("status", status));
+        return Document.fromApi(docObj(body), this::decryptValue);
+    }
+
+    /** Update a document's metadata / name / description (any subset; at least one). */
+    public Document updateDocumentMetadata(String documentId, Map<String, Object> metadata,
+                                           String name, String description) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (metadata != null) {
+            payload.put("metadata", metadata);
+        }
+        if (name != null) {
+            payload.put("name", name);
+        }
+        if (description != null) {
+            payload.put("description", description);
+        }
+        if (payload.isEmpty()) {
+            throw new ConfigException("updateDocumentMetadata needs metadata, name, or description");
+        }
+        Object body = http.put(DOCUMENTS + "/" + documentId, payload);
+        return Document.fromApi(docObj(body), this::decryptValue);
+    }
+
+    /** Delete a document (and its on-disk file). */
+    public void deleteDocument(String documentId) {
+        http.delete(DOCUMENTS + "/" + documentId);
+    }
+
+    /**
+     * The arguments for {@link Client#createDocument(CreateDocumentRequest)} — a small
+     * builder for the many optionals (broadcast vs per-person, json vs file).
+     */
+    public static final class CreateDocumentRequest {
+        private String kind = "document";
+        private String name;
+        private String payloadKind;
+        private boolean isPrivate = false;
+        private String description;
+        private String connectionId;
+        private String personUserId;
+        private String shareCode;            // recipient handle for per-person encryption
+        private Object jsonValue;
+        private byte[] fileBytes;
+        private String fileMime;
+        private Map<String, Object> metadata;
+        private String status;
+
+        public static CreateDocumentRequest builder() {
+            return new CreateDocumentRequest();
+        }
+
+        public CreateDocumentRequest kind(String v) { this.kind = v; return this; }
+        public CreateDocumentRequest name(String v) { this.name = v; return this; }
+        public CreateDocumentRequest payloadKind(String v) { this.payloadKind = v; return this; }
+        public CreateDocumentRequest isPrivate(boolean v) { this.isPrivate = v; return this; }
+        public CreateDocumentRequest description(String v) { this.description = v; return this; }
+        public CreateDocumentRequest connectionId(String v) { this.connectionId = v; return this; }
+        public CreateDocumentRequest personUserId(String v) { this.personUserId = v; return this; }
+        public CreateDocumentRequest shareCode(String v) { this.shareCode = v; return this; }
+        public CreateDocumentRequest jsonValue(Object v) { this.jsonValue = v; return this; }
+        public CreateDocumentRequest fileBytes(byte[] v) { this.fileBytes = v; return this; }
+        public CreateDocumentRequest fileMime(String v) { this.fileMime = v; return this; }
+        public CreateDocumentRequest metadata(Map<String, Object> v) { this.metadata = v; return this; }
+        public CreateDocumentRequest status(String v) { this.status = v; return this; }
+    }
+
     // ── module-level helpers ──────────────────────────────────────────────────
+
+    /**
+     * Pull the document object out of a create/get/update response. The API returns the
+     * bare document object; tolerate a {@code {"document": {...}}} wrapper too.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> docObj(Object body) {
+        if (body instanceof Map<?, ?> m) {
+            Object inner = ((Map<String, Object>) m).get("document");
+            if (inner instanceof Map<?, ?> im) {
+                return (Map<String, Object>) im;
+            }
+            return (Map<String, Object>) m;
+        }
+        return Map.of();
+    }
+
+    /** Build a {@code data:<mime>;base64,<…>} URI for the per-person file envelope. */
+    private static String dataUri(byte[] fileBytes, String mime) {
+        String b64 = java.util.Base64.getEncoder().encodeToString(fileBytes);
+        return "data:" + (mime != null ? mime : "application/octet-stream") + ";base64," + b64;
+    }
 
     private static java.security.interfaces.RSAPrivateKey loadServiceKey(Config config) {
         byte[] pem;

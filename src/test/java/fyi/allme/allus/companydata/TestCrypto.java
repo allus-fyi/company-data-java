@@ -80,6 +80,12 @@ final class TestCrypto {
         }
     }
 
+    /** The base64 SPKI/DER encoding of a public key (what GET /api/keys returns). */
+    static String spkiB64(RSAPublicKey pub) {
+        // JCA's RSAPublicKey.getEncoded() is X.509 SubjectPublicKeyInfo (SPKI/DER).
+        return Base64.getEncoder().encodeToString(pub.getEncoded());
+    }
+
     /** Generate a throwaway RSA-2048 keypair for the account-key webhook tests. */
     static KeyPair generateRsa2048() {
         try {
