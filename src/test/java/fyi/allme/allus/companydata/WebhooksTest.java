@@ -260,6 +260,11 @@ class WebhooksTest {
                         + "\"label\":\"Work email\",\"type\":\"email\",\"one_time\":false,"
                         + "\"mandatory_provide\":true,\"mandatory_connected\":false}]}");
                 }
+
+                @Override
+                public Response send(String method, String url, byte[] body, Map<String, String> headers) {
+                    throw new AssertionError("unexpected " + method + " " + url);
+                }
             };
 
         Client client = new Client(cfg, catalogOnly);
@@ -304,6 +309,11 @@ class WebhooksTest {
                     return FakeTransport.json(200, "{\"request_fields\":[{\"slug\":\"work_email\","
                         + "\"label\":\"Work email\",\"type\":\"email\",\"one_time\":false,"
                         + "\"mandatory_provide\":true,\"mandatory_connected\":false}]}");
+                }
+
+                @Override
+                public Response send(String method, String url, byte[] body, Map<String, String> headers) {
+                    throw new AssertionError("unexpected " + method + " " + url);
                 }
             };
 

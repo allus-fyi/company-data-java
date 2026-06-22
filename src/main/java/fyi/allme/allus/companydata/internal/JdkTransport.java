@@ -52,6 +52,18 @@ public final class JdkTransport implements Transport {
         return send(b.build(), url);
     }
 
+    @Override
+    public Response send(String method, String url, byte[] body, Map<String, String> headers) {
+        HttpRequest.BodyPublisher publisher = (body == null)
+            ? HttpRequest.BodyPublishers.noBody()
+            : HttpRequest.BodyPublishers.ofByteArray(body);
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
+            .timeout(Duration.ofSeconds(60))
+            .method(method, publisher);
+        applyHeaders(b, headers);
+        return send(b.build(), url);
+    }
+
     private static void applyHeaders(HttpRequest.Builder b, Map<String, String> headers) {
         if (headers != null) {
             for (Map.Entry<String, String> e : headers.entrySet()) {

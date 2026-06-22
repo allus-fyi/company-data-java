@@ -17,11 +17,18 @@ import javax.crypto.spec.PSource;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.io.StringReader;
+import java.security.KeyFactory;
 import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
 import java.security.Security;
 import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Decryption core — byte-identical to the platform's Web Crypto encryption and to
@@ -66,6 +73,7 @@ public final class Crypto {
     public static final int GCM_IV_LEN = 12;
 
     private static final BouncyCastleProvider BC = new BouncyCastleProvider();
+    private static final SecureRandom RNG = new SecureRandom();
 
     static {
         // Register BouncyCastle if it isn't already, so the PKCS#8 decryptor and
@@ -206,6 +214,105 @@ public final class Crypto {
             throw new DecryptException("AES-GCM tag mismatch (wrong key or corrupt data)", exc);
         } catch (java.security.GeneralSecurityException exc) {
             throw new DecryptException("AES-GCM decrypt failed: " + exc.getMessage(), exc);
+        }
+    }
+
+    /**
+     * Load a base64 SPKI/DER public key (the platform's {@code GET /api/keys}
+     * {@code public_key}) into an RSA public key.
+     *
+     * <p>Config-only key handling does NOT apply to a RECIPIENT public key: it is not a
+     * secret and is fetched live from the API per-recipient (never configured). The SDK
+     * still never accepts a <em>private</em> key/passphrase as a method argument.
+     *
+     * @throws DecryptException if the value is not valid base64 or not an RSA SPKI key.
+     */
+    public static RSAPublicKey loadPublicKey(String spkiB64) {
+        byte[] der;
+        try {
+            der = Base64.getDecoder().decode(spkiB64);
+        } catch (IllegalArgumentException exc) {
+            throw new DecryptException("recipient public_key is not valid base64", exc);
+        }
+        try {
+            PublicKey key = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(der));
+            if (!(key instanceof RSAPublicKey rsa)) {
+                throw new DecryptException("recipient public_key is not an RSA public key");
+            }
+            return rsa;
+        } catch (java.security.GeneralSecurityException exc) {
+            throw new DecryptException(
+                "recipient public_key is not a valid SPKI key: " + exc.getMessage(), exc);
+        }
+    }
+
+    /**
+     * Encrypt a UTF-8 string FOR a recipient RSA public key → a
+     * {@code {"_enc":1,k,iv,d}} wrapper. The exact inverse of {@link #decrypt}:
+     *
+     * <pre>
+     * aesKey = 32 random bytes
+     * d      = AES-256-GCM(aesKey, iv=12 random bytes).encrypt(utf8(plaintext))  // tag appended
+     * k      = RSA-OAEP(SHA-256, MGF1-SHA256).encrypt(aesKey, publicKey)
+     * </pre>
+     *
+     * <p>Used for EVERY per-person (targeted) document (json + file), independent of
+     * is_private — broadcast docs stay plaintext. The result round-trips through
+     * {@link #decrypt}.
+     *
+     * @return the wrapper as a {@code {_enc,k,iv,d}} {@code Map} (JSON-serializable).
+     */
+    public static Map<String, Object> encryptForPublicKey(String plaintext, RSAPublicKey publicKey) {
+        if (plaintext == null) {
+            throw new DecryptException("plaintext to encrypt must not be null");
+        }
+        byte[] aesKey = new byte[32];
+        RNG.nextBytes(aesKey);
+        byte[] iv = new byte[GCM_IV_LEN]; // 12
+        RNG.nextBytes(iv);
+
+        // AES-256-GCM: Java appends the 16-byte tag to the ciphertext (platform layout).
+        byte[] ciphertextWithTag = aesGcmEncrypt(
+            aesKey, iv, plaintext.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        // RSA-OAEP(SHA-256, MGF1-SHA256) — pin SHA-256 for digest AND MGF1 (never SHA-1),
+        // the same explicit OAEPParameterSpec footgun fix as the decrypt path.
+        byte[] encKey = rsaOaepEncrypt(aesKey, publicKey, "SHA-256", MGF1ParameterSpec.SHA256);
+
+        Map<String, Object> wrapper = new LinkedHashMap<>();
+        wrapper.put("_enc", 1);
+        wrapper.put("k", Base64.getEncoder().encodeToString(encKey));
+        wrapper.put("iv", Base64.getEncoder().encodeToString(iv));
+        wrapper.put("d", Base64.getEncoder().encodeToString(ciphertextWithTag));
+        return wrapper;
+    }
+
+    /**
+     * RSA-OAEP encrypt with a pinned OAEP digest + MGF1 hash. The explicit
+     * {@link OAEPParameterSpec} is the only way to control MGF1 on SunJCE — without it
+     * {@code RSA/ECB/OAEPPadding} would default MGF1 to SHA-1 (the classic footgun).
+     */
+    static byte[] rsaOaepEncrypt(byte[] data, RSAPublicKey key, String oaepDigest,
+                                 MGF1ParameterSpec mgf1) {
+        try {
+            Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPPadding");
+            OAEPParameterSpec spec = new OAEPParameterSpec(
+                oaepDigest, "MGF1", mgf1, PSource.PSpecified.DEFAULT);
+            cipher.init(Cipher.ENCRYPT_MODE, key, spec);
+            return cipher.doFinal(data);
+        } catch (java.security.GeneralSecurityException exc) {
+            throw new DecryptException("RSA-OAEP wrap failed: " + exc.getMessage(), exc);
+        }
+    }
+
+    /** AES-256-GCM encrypt; the 16-byte tag is appended to the returned ciphertext. */
+    static byte[] aesGcmEncrypt(byte[] aesKey, byte[] iv, byte[] plaintext) {
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LEN * 8, iv);
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(aesKey, "AES"), spec);
+            return cipher.doFinal(plaintext);
+        } catch (java.security.GeneralSecurityException exc) {
+            throw new DecryptException("AES-GCM encrypt failed: " + exc.getMessage(), exc);
         }
     }
 

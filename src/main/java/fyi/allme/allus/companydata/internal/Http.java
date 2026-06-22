@@ -141,9 +141,50 @@ public final class Http {
     }
 
     public Object get(String path, Map<String, String> params) {
+        return request("GET", path, params, null, null, null);
+    }
+
+    /** POST {@code path} with a JSON body → parsed body. */
+    public Object post(String path, Object jsonBody) {
+        return request("POST", path, null, jsonBody, null, null);
+    }
+
+    /** POST {@code path} with a raw byte body + content type → parsed body. */
+    public Object post(String path, byte[] rawBody, String contentType) {
+        return request("POST", path, null, null, rawBody, contentType);
+    }
+
+    /** PUT {@code path} with a JSON body → parsed body. */
+    public Object put(String path, Object jsonBody) {
+        return request("PUT", path, null, jsonBody, null, null);
+    }
+
+    /** DELETE {@code path} → parsed body. */
+    public Object delete(String path) {
+        return request("DELETE", path, null, null, null, null);
+    }
+
+    /**
+     * The shared request loop for every verb. Adds the bearer token + an
+     * {@code Accept} header matching {@code config.format()}, carries an optional JSON
+     * or raw-bytes body, parses JSON or XML, and maps non-2xx responses to the SDK
+     * errors: 401 → one refresh-and-retry then {@link AuthException}; 429 → bounded
+     * Retry-After backoff then {@link RateLimitException}; other non-2xx →
+     * {@link ApiException}.
+     */
+    private Object request(String method, String path, Map<String, String> params,
+                           Object jsonBody, byte[] rawBody, String contentType) {
         String url = url(path);
         boolean wantsXml = "xml".equals(config.format());
         String accept = wantsXml ? "application/xml" : "application/json";
+
+        // Resolve the body bytes + content type once (the same body is re-sent on retry).
+        byte[] body = rawBody;
+        String ctype = contentType;
+        if (rawBody == null && jsonBody != null) {
+            body = Json.write(jsonBody).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            ctype = "application/json";
+        }
 
         int retries429 = 0;
         boolean refreshed401 = false;
@@ -152,8 +193,16 @@ public final class Http {
             Map<String, String> headers = new LinkedHashMap<>();
             headers.put("Authorization", "Bearer " + tok);
             headers.put("Accept", accept);
+            if (body != null && ctype != null) {
+                headers.put("Content-Type", ctype);
+            }
 
-            Transport.Response resp = transport.get(url, params, headers);
+            Transport.Response resp;
+            if ("GET".equals(method) && body == null) {
+                resp = transport.get(url, params, headers);
+            } else {
+                resp = transport.send(method, url, body, headers);
+            }
             int status = resp.status();
 
             if (status >= 200 && status < 300) {

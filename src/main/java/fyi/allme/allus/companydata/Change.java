@@ -17,7 +17,8 @@ import java.util.Map;
  * profile share code, present on every event (may be {@code null}).
  * {@link #slug()}/{@link #value()}/{@link #live()} are present only on
  * {@code field_updated} (connection/consent events carry no slot/value).
- * {@link #live()} is {@code null} when absent.
+ * {@link #live()} is {@code null} when absent. {@link #documentId()}/{@link #status()}
+ * are set only on {@code document_status_changed}.
  */
 public record Change(
     String id,
@@ -27,6 +28,8 @@ public record Change(
     String slug,
     Object value,
     Boolean live,
+    String documentId,
+    String status,
     OffsetDateTime at,
     Map<String, Object> raw
 ) {
@@ -45,9 +48,14 @@ public record Change(
         String personId = firstNonNull(
             Parse.str(obj.get("person_user_id")), Parse.str(obj.get("person_id")));
 
+        // document_status_changed carries a document_id + new status (no slot/value).
+        String documentId = Parse.str(obj.get("document_id"));
+        String status = "document_status_changed".equals(event) ? Parse.str(obj.get("status")) : null;
+
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), slug, value, live,
+            documentId, status,
             Parse.isoDateTime(obj.get("at")), obj);
     }
 
