@@ -18,6 +18,7 @@ request slots you configured.
 **Contents:** [TL;DR — fetch new updates](#tldr--fetch-new-updates) ·
 [Quickstart](#quickstart) · [Every call](#every-call) ·
 [The typed value model](#the-typed-value-model) ·
+[Company documents](#company-documents) ·
 [The changes pump](#the-changes-pump) · [Webhooks](#webhooks) ·
 [Rate limits](#rate-limits) · [Errors](#errors) ·
 [How it's wired](#how-its-wired)
@@ -34,7 +35,7 @@ Deeper reference pages live in [`docs/`](docs/):
 <dependency>
   <groupId>fyi.allme.allus</groupId>
   <artifactId>company-data</artifactId>
-  <version>0.0.4</version>
+  <version>0.0.5</version>
 </dependency>
 ```
 
@@ -88,14 +89,14 @@ Requires **Java 21+**. Maven Central coordinates:
 <dependency>
   <groupId>fyi.allme.allus</groupId>
   <artifactId>company-data</artifactId>
-  <version>0.0.4</version>
+  <version>0.0.5</version>
 </dependency>
 ```
 
 Gradle:
 
 ```groovy
-implementation 'fyi.allme.allus:company-data:0.0.4'
+implementation 'fyi.allme.allus:company-data:0.0.5'
 ```
 
 Everything is in the package `fyi.allme.allus.companydata`:
@@ -401,6 +402,136 @@ Every model carries `.raw()` — the underlying *hardened* API object
 still never contains the person's source field.
 
 See [`docs/model.md`](docs/model.md) for the full reference.
+
+---
+
+## Company documents
+
+Beyond the per-person *values* a person shares with you, a service can also push
+**documents** to its connections — a contract PDF, an offer, a structured JSON
+payload. These are written by you (the company) and read by the person's app; the
+SDK gives you the full create/list/get/update/delete surface.
+
+The one rule to internalise: **every per-person document is automatically
+end-to-end encrypted to the recipient's public key before it leaves the process —
+for ANY value of `isPrivate`. Broadcast documents (no target) are sent plaintext.**
+The SDK fetches the recipient key (`GET /api/keys/{shareCode}`) and encrypts for
+you; **no method ever takes a key or secret argument**.
+
+`isPrivate` is **device-display-only** — it tells the recipient's app whether to
+show the document behind a lock (tap-to-reveal) or decrypt-on-load. It does **not**
+decide whether the value is encrypted (the *target* does). Because a plaintext
+broadcast can't be locked, `isPrivate=true` with no per-person target throws a
+`ConfigException`.
+
+Each document is `json` or `file` (`payloadKind`):
+
+* `payloadKind="json"` → set `jsonValue(Object)` (any JSON-serialisable object).
+* `payloadKind="file"` → set `fileBytes(byte[])` (and `fileMime(String)`).
+
+### Create
+
+```java
+import fyi.allme.allus.companydata.Client;
+import fyi.allme.allus.companydata.Client.CreateDocumentRequest;
+import fyi.allme.allus.companydata.Document;
+import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+Client client = Client.fromConfig("allus.json");
+
+// BROADCAST — a plaintext json document for every connection of this service.
+// No target ⇒ plaintext; isPrivate must stay false.
+Document notice = client.createDocument(CreateDocumentRequest.builder()
+    .kind("notice")
+    .name("Q1 service update")
+    .payloadKind("json")
+    .jsonValue(Map.of(
+        "headline", "New self-service portal",
+        "effective", "2026-04-01"))
+    .status("active"));
+
+// PER-PERSON — automatically end-to-end encrypted to the recipient's public key.
+// Target by connectionId / personUserId / shareCode (any one); the SDK resolves
+// the recipient key. isPrivate here is display-only (lock vs decrypt-on-load).
+byte[] pdf = Files.readAllBytes(Path.of("/tmp/contract-alice.pdf"));
+Document contract = client.createDocument(CreateDocumentRequest.builder()
+    .kind("contract")
+    .name("Service agreement")
+    .payloadKind("file")
+    .fileBytes(pdf)
+    .fileMime("application/pdf")
+    .connectionId("019xxxxxxxxxxxxxxxxxxxxxxxxx")   // or .personUserId(...) / .shareCode(...)
+    .isPrivate(true)                                 // recipient app shows it behind a lock
+    .status("ready_to_sign"));
+
+System.out.println(contract.id() + " " + contract.status());
+```
+
+`shareCode(...)` lets you skip the recipient-key lookup when you already have the
+person's profile share code; otherwise the SDK resolves it from `connectionId`
+(single-connection fetch) or `personUserId` (connections scan).
+
+### List / fetch / update / delete
+
+```java
+// List this service's documents (paged; optional person/status filter).
+for (Document doc : client.listDocuments()) {
+    System.out.printf("%s  %-14s %-7s %s%n",
+        doc.id(), doc.kind(), doc.status(), doc.name());
+}
+// Filtered: client.listDocuments(personUserId, status, limit, offset)
+List<Document> openForAlice =
+    client.listDocuments("019alice…", "ready_to_sign", 50, 0);
+
+// Fetch one by id.
+Document doc = client.document(contract.id());
+
+// A per-person json document is an encrypted wrapper — .json() decrypts it
+// transparently with your service key (a broadcast json doc returns plaintext as-is).
+Object body = doc.json();        // throws DecryptException if it isn't a json doc
+
+// Move it through its lifecycle: offering → ready_to_sign → active →
+//                                active_but_ending → ended.
+client.updateDocumentStatus(doc.id(), "active");
+
+// Patch metadata / name / description (any subset; at least one required).
+client.updateDocumentMetadata(doc.id(),
+    Map.of("ref", "ACME-2026-014"),   // metadata
+    "Service agreement (rev. 2)",     // name (or null)
+    null);                            // description (or null)
+
+// Remove it (and its on-disk file).
+client.deleteDocument(doc.id());
+```
+
+`Document` carries `id()`, `kind()`, `name()`, `description()`, `status()`,
+`payloadKind()`, `isPrivate()`, `value()`, `metadata()`, `createdAt()`,
+`updatedAt()`, plus `.json()` (json docs) and `.raw()`.
+
+### Reacting to status changes
+
+When a document's lifecycle status changes, the platform emits a
+`document_status_changed` change event. It rides the same pump / webhook channel
+as field changes — the `Change` carries `documentId()` and `status()` (no
+slot/value):
+
+```java
+client.processChanges(change -> {
+    if (seen(change.id())) return;
+    switch (change.event()) {
+        case "document_status_changed" ->
+            onDocumentStatus(change.documentId(), change.status());   // e.g. "active" / "ended"
+        case "field_updated" ->
+            store(change.personId(), change.slug(), change.value());
+        default -> { }
+    }
+    recordSeen(change.id());
+});
+```
+
+`documentId()` / `status()` are non-null only on `document_status_changed`.
 
 ---
 
