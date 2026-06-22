@@ -505,6 +505,29 @@ class ClientTest {
     }
 
     @Test
+    void createDocumentContractWithoutTargetThrows(@TempDir Path tmp) throws Exception {
+        RoutingTransport t = new RoutingTransport(noGet(), (m, u, j, d) -> {
+            throw new AssertionError("should not POST");
+        });
+        Client client = new Client(config(tmp), t);
+        assertThrows(ConfigException.class, () -> client.createDocument(
+            Client.CreateDocumentRequest.builder()
+                .name("Agreement").payloadKind("json").kind("agreement")
+                .requiresSignature(true).jsonValue(Map.of("a", 1))));
+    }
+
+    @Test
+    void createDocumentInvalidKindThrows(@TempDir Path tmp) throws Exception {
+        RoutingTransport t = new RoutingTransport(noGet(), (m, u, j, d) -> {
+            throw new AssertionError("should not POST");
+        });
+        Client client = new Client(config(tmp), t);
+        assertThrows(ConfigException.class, () -> client.createDocument(
+            Client.CreateDocumentRequest.builder()
+                .name("x").payloadKind("json").kind("invalid").jsonValue(Map.of("a", 1))));
+    }
+
+    @Test
     void createDocumentFileBroadcastUploadsRawBytes(@TempDir Path tmp) throws Exception {
         List<RoutingTransport.WriteCall> calls = new ArrayList<>();
         RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {

@@ -360,6 +360,47 @@ class ModelsTest {
     }
 
     @Test
+    void changeDocumentStatusChangedCarriesAction() {
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("id", "chg-sign");
+        ev.put("event", "document_status_changed");
+        ev.put("person_user_id", "u-2");
+        ev.put("action", "signed");
+        ev.put("document_id", "doc-7");
+        ev.put("status", "active");
+        ev.put("at", "2026-06-22T10:00:00Z");
+
+        Change chg = Change.listFromApi(Map.of("changes", List.of(ev)), deps).get(0);
+        assertEquals("document_status_changed", chg.event());
+        assertEquals("signed", chg.action());
+        assertEquals("doc-7", chg.documentId());
+        assertEquals("active", chg.status());
+        assertNull(chg.slug());
+    }
+
+    @Test
+    void documentModelCarriesContractFlagsAndSignatures() {
+        Map<String, Object> obj = new LinkedHashMap<>();
+        obj.put("id", "c1");
+        obj.put("kind", "agreement");
+        obj.put("name", "Agreement");
+        obj.put("status", "active");
+        obj.put("payload_kind", "json");
+        obj.put("is_private", false);
+        obj.put("value", Map.of("v", 1));
+        obj.put("metadata", Map.of());
+        obj.put("requires_signature", true);
+        obj.put("requires_acceptance", false);
+        obj.put("signatures", List.of(Map.of("action", "signed", "method", "biometric")));
+        Document doc = Document.fromApi(obj, null);
+        assertTrue(doc.requiresSignature());
+        assertFalse(doc.requiresAcceptance());
+        assertEquals(1, doc.signatures().size());
+        assertEquals("signed", doc.signatures().get(0).get("action"));
+    }
+
+    @Test
     void documentModelBroadcastJsonIsPlaintext() {
         Map<String, Object> obj = new LinkedHashMap<>();
         obj.put("id", "d1");

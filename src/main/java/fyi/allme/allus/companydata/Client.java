@@ -474,6 +474,9 @@ public final class Client {
         if (!"json".equals(req.payloadKind) && !"file".equals(req.payloadKind)) {
             throw new ConfigException("payloadKind must be 'json' or 'file'");
         }
+        if (!"document".equals(req.kind) && !"agreement".equals(req.kind) && !"subscription".equals(req.kind)) {
+            throw new ConfigException("kind must be 'document', 'agreement' or 'subscription'");
+        }
         Map<String, Object> target = null;
         if (req.connectionId != null) {
             target = Map.of("connection_id", req.connectionId);
@@ -482,6 +485,12 @@ public final class Client {
         } // else: broadcast — target stays null
 
         boolean perPerson = target != null;
+        // A contract (agreement/subscription, or either flag) is ALWAYS per-person → it must target one person.
+        boolean isContract = "agreement".equals(req.kind) || "subscription".equals(req.kind)
+            || req.requiresSignature || req.requiresAcceptance;
+        if (isContract && !perPerson) {
+            throw new ConfigException("a contract must target one connected person");
+        }
         if (req.isPrivate && !perPerson) {
             // A plaintext broadcast cannot be locked — is_private needs a per-person target.
             throw new ConfigException(
@@ -501,6 +510,8 @@ public final class Client {
         body.put("name", req.name);
         body.put("payload_kind", req.payloadKind);
         body.put("is_private", req.isPrivate);
+        body.put("requires_signature", req.requiresSignature);
+        body.put("requires_acceptance", req.requiresAcceptance);
         body.put("target", target);
         if (req.description != null) {
             body.put("description", req.description);
@@ -624,6 +635,8 @@ public final class Client {
         private Object jsonValue;
         private byte[] fileBytes;
         private String fileMime;
+        private boolean requiresSignature = false;   // contract: the person must sign (step-up)
+        private boolean requiresAcceptance = false;  // contract: the person must accept
         private Map<String, Object> metadata;
         private String status;
 
@@ -642,6 +655,8 @@ public final class Client {
         public CreateDocumentRequest jsonValue(Object v) { this.jsonValue = v; return this; }
         public CreateDocumentRequest fileBytes(byte[] v) { this.fileBytes = v; return this; }
         public CreateDocumentRequest fileMime(String v) { this.fileMime = v; return this; }
+        public CreateDocumentRequest requiresSignature(boolean v) { this.requiresSignature = v; return this; }
+        public CreateDocumentRequest requiresAcceptance(boolean v) { this.requiresAcceptance = v; return this; }
         public CreateDocumentRequest metadata(Map<String, Object> v) { this.metadata = v; return this; }
         public CreateDocumentRequest status(String v) { this.status = v; return this; }
     }
