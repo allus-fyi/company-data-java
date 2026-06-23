@@ -288,6 +288,44 @@ class ModelsTest {
         assertNull(chg.value()); // consent events carry no value
     }
 
+    /** connection_request_accepted/_rejected (idea 2) surface request_id; no slot/value. */
+    @Test
+    void changeConnectRequestOutcomeEventsCarryRequestId() {
+        ModelDeps deps = new ModelDeps(w -> "", s -> null, null);
+
+        Map<String, Object> accepted = new LinkedHashMap<>();
+        accepted.put("id", "c1");
+        accepted.put("event", "connection_request_accepted");
+        accepted.put("request_id", "req-9");
+        accepted.put("person_user_id", "person-1");
+        accepted.put("share_code", "P1CODE");
+        accepted.put("at", "2026-06-23T10:00:00Z");
+
+        Map<String, Object> rejected = new LinkedHashMap<>();
+        rejected.put("id", "c2");
+        rejected.put("event", "connection_request_rejected");
+        rejected.put("request_id", "req-8");
+        rejected.put("person_user_id", "person-2");
+
+        Map<String, Object> created = new LinkedHashMap<>();
+        created.put("id", "c3");
+        created.put("event", "connection_created");
+        created.put("person_user_id", "person-3");
+
+        List<Change> changes = Change.listFromApi(
+            Map.of("changes", List.of(accepted, rejected, created)), deps);
+
+        assertEquals("connection_request_accepted", changes.get(0).event());
+        assertEquals("req-9", changes.get(0).requestId());
+        assertEquals("person-1", changes.get(0).personId());
+        assertEquals("P1CODE", changes.get(0).shareCode());
+        assertNull(changes.get(0).slug());
+        assertNull(changes.get(0).value());
+
+        assertEquals("req-8", changes.get(1).requestId());
+        assertNull(changes.get(2).requestId()); // unrelated event
+    }
+
     // ── LogEntry ──────────────────────────────────────────────────────────────
 
     @Test
