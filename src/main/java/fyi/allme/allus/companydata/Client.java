@@ -51,6 +51,8 @@ public final class Client {
     private static final String REQUEST_FIELDS = BASE + "/request-fields";
     private static final String LOGS = BASE + "/logs";
     private static final String DOCUMENTS = BASE + "/documents";
+    private static final String FLOWS = BASE + "/flows";          // POST /flows/{flowId}/runs
+    private static final String FLOW_RUNS = BASE + "/flow-runs";  // list / get / answers / generate
     private static final String KEYS = "/api/keys";
 
     private static final int DEFAULT_CONN_PAGE = 100;
@@ -73,6 +75,9 @@ public final class Client {
     // Recipient RSA public keys (by share_code) — cached for per-person document
     // encryption. A public key is immutable + not a secret (fetched live, never configured).
     private final Map<String, java.security.interfaces.RSAPublicKey> pubkeyCache = new LinkedHashMap<>();
+
+    // The service RSA public key (public half of the loaded private key), derived once.
+    private java.security.interfaces.RSAPublicKey servicePublicKey;
 
     public Client(Config config) {
         this(config, new Http(config), Logger.getLogger("fyi.allme.allus.companydata.client"), Client::defaultSleep);
@@ -619,6 +624,251 @@ public final class Client {
         http.delete(DOCUMENTS + "/" + documentId);
     }
 
+    // ── contract-flow runs (company side — the company is a bound party) ─────────
+
+    /**
+     * Start a run for a connection. {@code bindings} = {@code {party_key: user_id}} covering the
+     * flow's parties (each bound user must be the company or the connected person). Pins the flow's
+     * latest PUBLISHED version. {@code connectionId} is the person-side
+     * {@code company_service_connections.id} for this service. Returns the created
+     * {@link FlowRun} (status {@code awaiting_<entry node's party>}).
+     */
+    public FlowRun triggerFlowRun(String flowId, String connectionId, Map<String, String> bindings) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("target", Map.of("connection_id", connectionId));
+        body.put("bindings", bindings);
+        Object created = http.post(FLOWS + "/" + flowId + "/runs", body);
+        return FlowRun.fromApi(created);
+    }
+
+    /** List this service's runs waiting on the company (the actionable queue). */
+    public List<FlowRun> flowRuns() {
+        return flowRuns("awaiting_company");
+    }
+
+    /**
+     * List this service's runs. A {@code null} or {@code "*"} status returns the unfiltered list;
+     * any other value is a status filter ({@code awaiting_<party>} / {@code generating} /
+     * {@code awaiting_signature} / {@code completed} / {@code cancelled}).
+     */
+    public List<FlowRun> flowRuns(String status) {
+        Map<String, String> params = null;
+        if (status != null && !status.isEmpty() && !"*".equals(status)) {
+            params = Map.of("status", status);
+        }
+        Object body = params != null ? http.get(FLOW_RUNS, params) : http.get(FLOW_RUNS);
+        List<FlowRun> out = new ArrayList<>();
+        for (Object o : listItems(body)) {
+            out.add(FlowRun.fromApi(o));
+        }
+        return out;
+    }
+
+    /** Fetch one run by id → {@link FlowRun}. */
+    public FlowRun flowRun(String runId) {
+        return FlowRun.fromApi(http.get(FLOW_RUNS + "/" + runId));
+    }
+
+    /**
+     * The service RSA public key = the public half of the loaded service private key. The run
+     * payload does NOT carry the service public key; the company makes its own answer copy by
+     * encrypting to the public half of the same RSA pair it already holds (config-only key
+     * handling — no extra fetch, no key arg).
+     */
+    private java.security.interfaces.RSAPublicKey servicePublicKey() {
+        if (servicePublicKey == null) {
+            servicePublicKey = derivePublicKey(privateKey);
+        }
+        return servicePublicKey;
+    }
+
+    /**
+     * Decrypt the company's service-key answer copies → {@code {slug: plaintext}}. Only the rows
+     * whose {@code for_user_id} is the company's bound user_id are decryptable with the service key.
+     */
+    private Map<String, Object> decryptRunAnswers(FlowRun run) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String serviceUid = run.serviceUserId();
+        for (Map<String, Object> row : run.answers()) {
+            Object forUser = row.get("for_user_id");
+            if (forUser == null || !forUser.equals(serviceUid)) {
+                continue;
+            }
+            Object slug = row.get("slug");
+            Object value = row.get("value");
+            if (slug == null || value == null) {
+                continue;
+            }
+            out.put(String.valueOf(slug), decryptValue(value));
+        }
+        return out;
+    }
+
+    /**
+     * Resolve a person party's RSA public key for per-party answer encryption. Prefers a
+     * caller-supplied key, else resolves the person's share_code from the run's connection →
+     * {@code GET /api/keys/{code}}.
+     *
+     * <p>Integration gap: the run payload exposes neither person public keys nor per-binding share
+     * codes, so the SDK resolves via the connection. Supply {@code partyPubKeys} to skip the lookup.
+     */
+    private java.security.interfaces.RSAPublicKey flowPersonPublicKey(
+            FlowRun run, String uid, Map<String, java.security.interfaces.RSAPublicKey> partyPubKeys) {
+        java.security.interfaces.RSAPublicKey supplied = partyPubKeys.get(uid);
+        if (supplied != null) {
+            return supplied;
+        }
+        String sc = resolveShareCode(run.connectionId(), uid);
+        return recipientPublicKey(sc);
+    }
+
+    /**
+     * Fill the company's current node and advance. {@code fill} = {@code {slug: plaintext_value}}
+     * the caller computed for this node. For EACH answer the SDK encrypts one copy per bound party
+     * (the company via the service public key; each person party via their public key), evaluates
+     * the next node LOCALLY (ordered outgoing edges, first match) over the full decrypted answer
+     * map, and POSTs {@code {answers, next_node?/leaf, next_party?}}. Returns the refreshed
+     * {@link FlowRun}. A document-mode leaf leaves the run {@code generating} — call
+     * {@link #generateFlowDocument(FlowRun)} (or {@link #processFlowRun}, which chains it).
+     */
+    public FlowRun submitFlowAnswers(FlowRun run, Map<String, Object> fill) {
+        return submitFlowAnswers(run, fill, Map.of());
+    }
+
+    /**
+     * As {@link #submitFlowAnswers(FlowRun, Map)}, but {@code partyPubKeys} supplies person-party
+     * public keys (by user_id) to skip the share_code → {@code /api/keys} resolution.
+     */
+    public FlowRun submitFlowAnswers(
+            FlowRun run, Map<String, Object> fill,
+            Map<String, java.security.interfaces.RSAPublicKey> partyPubKeys) {
+        Map<String, Object> answersSoFar = decryptRunAnswers(run);
+        Map<String, Object> full = new LinkedHashMap<>(answersSoFar);
+        full.putAll(fill);
+        java.security.interfaces.RSAPublicKey svcPub = servicePublicKey();
+
+        List<Object> answersOut = new ArrayList<>();
+        for (Map.Entry<String, Object> e : fill.entrySet()) {
+            String slug = e.getKey();
+            Object val = e.getValue();
+            String plain = val instanceof String s ? s : Json.write(val);
+            List<Object> values = new ArrayList<>();
+            for (String uid : run.bindings().values()) {
+                java.security.interfaces.RSAPublicKey key = uid.equals(run.serviceUserId())
+                    ? svcPub : flowPersonPublicKey(run, uid, partyPubKeys);
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("for_user_id", uid);
+                entry.put("value", Crypto.encryptForPublicKey(plain, key));
+                values.add(entry);
+            }
+            Map<String, Object> answer = new LinkedHashMap<>();
+            answer.put("slug", slug);
+            answer.put("values", values);
+            answersOut.add(answer);
+        }
+
+        NextNode next = computeNextNode(run.definition(), run.currentNode(), full);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("answers", answersOut);
+        if (next.leaf) {
+            body.put("leaf", true);
+        } else {
+            body.put("next_node", next.nextNode);
+            body.put("next_party", partyOf(run.definition(), next.nextNode));
+        }
+        Object res = http.post(FLOW_RUNS + "/" + run.id() + "/answers", body);
+        return FlowRun.fromApi(res);
+    }
+
+    /**
+     * Document-mode company leaf: one-time-key value gather → POST /generate. Builds a random
+     * 32-byte AES-256-GCM key, encrypts {@code JSON({slug: plaintext})} of the company's decrypted
+     * answers, packs {@code iv(12)||ciphertext||tag(16)}, and POSTs {@code {otk, values}} (both
+     * base64). Returns the raw API response {@code {document_id, status}} (idempotent).
+     */
+    public Object generateFlowDocument(FlowRun run) {
+        Map<String, Object> answers = decryptRunAnswers(run);
+        Map<String, Object> strMap = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : answers.entrySet()) {
+            strMap.put(e.getKey(), e.getValue() instanceof String s ? s : Json.write(e.getValue()));
+        }
+        byte[] payload = Json.write(strMap).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] otk = new byte[32];
+        byte[] iv = new byte[12];
+        java.security.SecureRandom rng = new java.security.SecureRandom();
+        rng.nextBytes(otk);
+        rng.nextBytes(iv);
+        byte[] ctWithTag;
+        try {
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,
+                new javax.crypto.spec.SecretKeySpec(otk, "AES"),
+                new javax.crypto.spec.GCMParameterSpec(128, iv));
+            ctWithTag = cipher.doFinal(payload); // ciphertext || tag(16)
+        } catch (java.security.GeneralSecurityException exc) {
+            throw new DecryptException("could not AES-GCM encrypt flow generate payload", exc);
+        }
+        byte[] blob = new byte[12 + ctWithTag.length]; // iv(12) || ciphertext || tag(16)
+        System.arraycopy(iv, 0, blob, 0, 12);
+        System.arraycopy(ctWithTag, 0, blob, 12, ctWithTag.length);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("otk", java.util.Base64.getEncoder().encodeToString(otk));
+        body.put("values", java.util.Base64.getEncoder().encodeToString(blob));
+        return http.post(FLOW_RUNS + "/" + run.id() + "/generate", body);
+    }
+
+    /** The company's per-node logic: returns the {@code {slug: value}} fill for the current node. */
+    @FunctionalInterface
+    public interface FillNode {
+        Map<String, Object> apply(Map<String, Object> node, Map<String, Object> answers);
+    }
+
+    /**
+     * High-level company turn: load → (if our turn) fill + advance + generate.
+     * {@code fillNode(node, answers)} returns {@code {slug: value}}; the SDK encrypts per party,
+     * submits, and — if the submit landed on a document-mode leaf — calls
+     * {@link #generateFlowDocument(FlowRun)}. Returns the latest {@link FlowRun}; when the run is
+     * not awaiting the company it is returned untouched.
+     */
+    public FlowRun processFlowRun(String runId, FillNode fillNode) {
+        return processFlowRun(runId, fillNode, Map.of());
+    }
+
+    /** As {@link #processFlowRun(String, FillNode)}, with caller-supplied person-party public keys. */
+    @SuppressWarnings("unchecked")
+    public FlowRun processFlowRun(
+            String runId, FillNode fillNode,
+            Map<String, java.security.interfaces.RSAPublicKey> partyPubKeys) {
+        FlowRun run = flowRun(runId);
+        String companyParty = run.companyPartyKey();
+        if (companyParty == null || !("awaiting_" + companyParty).equals(run.status())) {
+            return run; // not our turn (or company not bound)
+        }
+        Map<String, Object> node = nodeByKey(run.definition(), run.currentNode());
+        if (node == null) {
+            return run;
+        }
+        Map<String, Object> answers = decryptRunAnswers(run);
+        Map<String, Object> fill = fillNode.apply(node, answers);
+        if (fill == null) {
+            fill = Map.of();
+        }
+        Map<String, Object> merged = new LinkedHashMap<>(answers);
+        merged.putAll(fill);
+        boolean wasLeaf = computeNextNode(run.definition(), run.currentNode(), merged).leaf;
+        run = submitFlowAnswers(run, fill, partyPubKeys);
+        String mode = run.outputMode();
+        if (mode == null || mode.isEmpty()) {
+            Object om = run.definition().get("output_mode");
+            mode = om == null ? null : String.valueOf(om);
+        }
+        if (wasLeaf && "document".equals(mode)) {
+            generateFlowDocument(run);
+            run = flowRun(run.id());
+        }
+        return run;
+    }
+
     /**
      * The arguments for {@link Client#createDocument(CreateDocumentRequest)} — a small
      * builder for the many optionals (broadcast vs per-person, json vs file).
@@ -677,6 +927,95 @@ public final class Client {
             return (Map<String, Object>) m;
         }
         return Map.of();
+    }
+
+    /** Derive the RSA public key (modulus + public exponent) from a CRT private key. */
+    private static java.security.interfaces.RSAPublicKey derivePublicKey(
+            java.security.interfaces.RSAPrivateKey priv) {
+        if (!(priv instanceof java.security.interfaces.RSAPrivateCrtKey crt)) {
+            throw new ConfigException("service private key is not a CRT key; cannot derive public half");
+        }
+        try {
+            java.security.spec.RSAPublicKeySpec spec =
+                new java.security.spec.RSAPublicKeySpec(crt.getModulus(), crt.getPublicExponent());
+            return (java.security.interfaces.RSAPublicKey)
+                java.security.KeyFactory.getInstance("RSA").generatePublic(spec);
+        } catch (java.security.GeneralSecurityException exc) {
+            throw new ConfigException("could not derive service public key: " + exc.getMessage(), exc);
+        }
+    }
+
+    /** A computed next-node decision: a leaf, or the next node key. */
+    private record NextNode(boolean leaf, String nextNode) {
+    }
+
+    /** Look up a node by key in the pinned definition graph. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> nodeByKey(Map<String, Object> definition, String key) {
+        Object nodes = definition.get("nodes");
+        if (!(nodes instanceof List<?> l)) {
+            return null;
+        }
+        for (Object n : l) {
+            if (n instanceof Map<?, ?> m && key != null && key.equals(m.get("key"))) {
+                return (Map<String, Object>) m;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The next node after {@code fromKey} — ordered outgoing edges, first match wins. Leaf is true
+     * when there is no outgoing edge or none matched (a dead-end is a leaf, matching the platform).
+     */
+    @SuppressWarnings("unchecked")
+    private static NextNode computeNextNode(Map<String, Object> definition, String fromKey,
+            Map<String, Object> answers) {
+        Object edgesObj = definition.get("edges");
+        List<Map<String, Object>> edges = new ArrayList<>();
+        if (edgesObj instanceof List<?> l) {
+            for (Object e : l) {
+                if (e instanceof Map<?, ?> m && fromKey != null && fromKey.equals(m.get("from"))) {
+                    edges.add((Map<String, Object>) m);
+                }
+            }
+        }
+        if (edges.isEmpty()) {
+            return new NextNode(true, null);
+        }
+        // Stable sort by the "sort" field (ties keep declaration order).
+        edges.sort((a, b) -> Double.compare(edgeSort(a), edgeSort(b)));
+        for (Map<String, Object> e : edges) {
+            if (FlowCondition.evaluate(e.get("condition"), answers)) {
+                return new NextNode(false, e.get("to") == null ? null : String.valueOf(e.get("to")));
+            }
+        }
+        return new NextNode(true, null);
+    }
+
+    private static double edgeSort(Map<String, Object> edge) {
+        Object s = edge.get("sort");
+        if (s instanceof Number n) {
+            return n.doubleValue();
+        }
+        if (s instanceof String str) {
+            try {
+                return Double.parseDouble(str.trim());
+            } catch (NumberFormatException ignored) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    /** The party that owns {@code nodeKey} in the definition. */
+    private static String partyOf(Map<String, Object> definition, String nodeKey) {
+        Map<String, Object> node = nodeByKey(definition, nodeKey);
+        if (node == null) {
+            return null;
+        }
+        Object party = node.get("party");
+        return party == null ? null : String.valueOf(party);
     }
 
     /** Build a {@code data:<mime>;base64,<…>} URI for the per-person file envelope. */
