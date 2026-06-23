@@ -31,6 +31,7 @@ public record Change(
     String documentId,
     String status,
     String action,   // set on document_status_changed for a contract: signed | accepted | cancelled
+    String requestId, // set on connection_request_accepted | connection_request_rejected
     OffsetDateTime at,
     Map<String, Object> raw
 ) {
@@ -55,10 +56,15 @@ public record Change(
         String status = isDocStatus ? Parse.str(obj.get("status")) : null;
         String action = isDocStatus ? Parse.str(obj.get("action")) : null;
 
+        // connection_request_accepted/_rejected carry the request_id (no slot/value).
+        String requestId = ("connection_request_accepted".equals(event)
+            || "connection_request_rejected".equals(event))
+            ? Parse.str(obj.get("request_id")) : null;
+
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), slug, value, live,
-            documentId, status, action,
+            documentId, status, action, requestId,
             Parse.isoDateTime(obj.get("at")), obj);
     }
 

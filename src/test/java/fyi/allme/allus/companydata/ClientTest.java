@@ -627,4 +627,40 @@ class ClientTest {
         assertEquals(2, puts);
         assertTrue(methods.stream().anyMatch(m -> m[0].equals("DELETE") && m[1].equals("/documents/d9")));
     }
+
+    // ── connect requests (service-initiated; idea 2) ────────────────────────────
+
+    @Test
+    void sendConnectRequestPostsShareCodeAndReturnsRequestId(@TempDir Path tmp) throws Exception {
+        Object[] captured = new Object[1];
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            assertEquals("POST", method);
+            assertTrue(url.endsWith("/company-data/connect-requests"));
+            captured[0] = jsonBody;
+            return FakeTransport.json(201, "{\"request_id\":\"req-1\"}");
+        };
+        RoutingTransport t = new RoutingTransport(noGet(), wr);
+        Client client = new Client(config(tmp), t);
+
+        assertEquals("req-1", client.sendConnectRequest("  ABC123 "));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) captured[0];
+        assertEquals("ABC123", body.get("share_code")); // trimmed
+    }
+
+    @Test
+    void sendConnectRequestBlankThrowsConfigException(@TempDir Path tmp) throws Exception {
+        Client client = new Client(config(tmp), new RoutingTransport(noGet(),
+            (method, url, jsonBody, data) -> {
+                throw new AssertionError("should not write for a blank share code");
+            }));
+        assertThrows(ConfigException.class, () -> client.sendConnectRequest("   "));
+    }
+
+    @Test
+    void sendConnectRequestMissingIdThrowsApiException(@TempDir Path tmp) throws Exception {
+        Client client = new Client(config(tmp), new RoutingTransport(noGet(),
+            (method, url, jsonBody, data) -> FakeTransport.json(201, "{}")));
+        assertThrows(ApiException.class, () -> client.sendConnectRequest("ABC123"));
+    }
 }

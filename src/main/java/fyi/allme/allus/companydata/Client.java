@@ -51,6 +51,7 @@ public final class Client {
     private static final String REQUEST_FIELDS = BASE + "/request-fields";
     private static final String LOGS = BASE + "/logs";
     private static final String DOCUMENTS = BASE + "/documents";
+    private static final String CONNECT_REQUESTS = BASE + "/connect-requests";
     private static final String FLOWS = BASE + "/flows";          // POST /flows/{flowId}/runs
     private static final String FLOW_RUNS = BASE + "/flow-runs";  // list / get / answers / generate
     private static final String KEYS = "/api/keys";
@@ -622,6 +623,30 @@ public final class Client {
     /** Delete a document (and its on-disk file). */
     public void deleteDocument(String documentId) {
         http.delete(DOCUMENTS + "/" + documentId);
+    }
+
+    // ── connect requests (service-initiated; idea 2) ────────────────────────────
+
+    /**
+     * Invite a person (by their share code) to connect to THIS service.
+     *
+     * <p>Wraps {@code POST /api/company-data/connect-requests} — auto-scoped to the calling
+     * client's service. Fire-and-forget: the person accepts or rejects, and the outcome reaches
+     * you only via the change feed / webhooks ({@code connection_request_accepted} /
+     * {@code connection_request_rejected}). No crypto, no key handling (the request carries no
+     * values). Returns the new request_id.
+     */
+    public String sendConnectRequest(String shareCode) {
+        String code = shareCode == null ? "" : shareCode.trim();
+        if (code.isEmpty()) {
+            throw new ConfigException("shareCode is required");
+        }
+        Object body = http.post(CONNECT_REQUESTS, Map.of("share_code", code));
+        String rid = (body instanceof Map<?, ?> m && m.get("request_id") instanceof String s) ? s : null;
+        if (rid == null || rid.isEmpty()) {
+            throw new ApiException(0, "company_connections.request_failed", "no request_id in response");
+        }
+        return rid;
     }
 
     // ── contract-flow runs (company side — the company is a bound party) ─────────
