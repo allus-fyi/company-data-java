@@ -528,7 +528,7 @@ class ClientTest {
     }
 
     @Test
-    void createDocumentFileBroadcastUploadsRawBytes(@TempDir Path tmp) throws Exception {
+    void createDocumentFileBroadcastUploadsFileDataUri(@TempDir Path tmp) throws Exception {
         List<RoutingTransport.WriteCall> calls = new ArrayList<>();
         RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
             calls.add(new RoutingTransport.WriteCall(method, url, jsonBody, data));
@@ -551,12 +551,19 @@ class ClientTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> body0 = (Map<String, Object>) calls.get(0).jsonBody();
         assertNull(body0.get("target"));
+        // /file body is JSON {"file": "data:...;base64,...", "original_name": <name>} — NOT raw bytes.
         assertTrue(calls.get(1).url().endsWith("/documents/f1/file"));
-        assertArrayEquals("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8), calls.get(1).data()); // raw bytes
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fileBody = (Map<String, Object>) calls.get(1).jsonBody();
+        assertEquals("C", fileBody.get("original_name"));
+        String file = (String) fileBody.get("file");
+        assertTrue(file.startsWith("data:application/pdf;base64,"));
+        assertArrayEquals("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8),
+            java.util.Base64.getDecoder().decode(file.split(",", 2)[1]));
     }
 
     @Test
-    void createDocumentFilePerPersonUploadsWrapperBytes(@TempDir Path tmp) throws Exception {
+    void createDocumentFilePerPersonUploadsValueWrapperString(@TempDir Path tmp) throws Exception {
         String spki = vectorPubSpkiB64();
         List<RoutingTransport.WriteCall> calls = new ArrayList<>();
         BiFunction<String, Map<String, String>, Response> get = (url, params) ->
@@ -577,12 +584,14 @@ class ClientTest {
             .name("C").payloadKind("file").fileBytes("hello-bytes".getBytes(StandardCharsets.UTF_8))
             .fileMime("application/pdf").personUserId("u1").shareCode("ABC123").isPrivate(true));
 
-        byte[] upload = calls.get(1).data();
-        assertTrue(upload != null && upload.length > 0);
+        // /file body is JSON {"value": "<wrapper JSON STRING>"} — the API requires value to be a STRING.
         @SuppressWarnings("unchecked")
-        Map<String, Object> wrapper = (Map<String, Object>) fyi.allme.allus.companydata.internal.Json.parse(
-            new String(upload, StandardCharsets.UTF_8));
-        assertEquals(1, ((Number) wrapper.get("_enc")).intValue()); // ciphertext wrapper bytes, not raw file
+        Map<String, Object> fileBody = (Map<String, Object>) calls.get(1).jsonBody();
+        Object value = fileBody.get("value");
+        assertTrue(value instanceof String, "value must be a JSON string, not a bare object");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> wrapper = (Map<String, Object>) fyi.allme.allus.companydata.internal.Json.parse((String) value);
+        assertEquals(1, ((Number) wrapper.get("_enc")).intValue()); // ciphertext wrapper, not raw file
         // decrypt → the {"file":"data:...base64,..."} envelope holding the original bytes
         @SuppressWarnings("unchecked")
         Map<String, Object> env = (Map<String, Object>) fyi.allme.allus.companydata.internal.Json.parse(

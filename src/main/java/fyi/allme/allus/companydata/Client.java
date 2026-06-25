@@ -546,19 +546,21 @@ public final class Client {
         }
         Object created = http.post(DOCUMENTS, body);
         Document doc = Document.fromApi(docObj(created), this::decryptValue);
+        String fileUrl = DOCUMENTS + "/" + doc.id() + "/file";
         if (perPerson) {
-            // Encrypt the file bytes (EVERY per-person doc): wrap the file envelope string,
-            // then send the wrapper JSON as bytes.
+            // EVERY per-person file doc is E2E-encrypted: wrap the file envelope string,
+            // encrypt it for the recipient, then POST {"value": "<wrapper JSON string>"}.
+            // The /file endpoint requires `value` to be a STRING (isValidEncryptedBlob),
+            // so the wrapper map is serialized to JSON; the bare wrapper was rejected (400).
             String envelope = Json.write(Map.of("file", dataUri(req.fileBytes, req.fileMime)));
             Map<String, Object> wrapper = Crypto.encryptForPublicKey(envelope, pubkey);
-            http.post(DOCUMENTS + "/" + doc.id() + "/file",
-                Json.write(wrapper).getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                "application/json");
+            http.post(fileUrl, Map.of("value", Json.write(wrapper)));
         } else {
-            // Broadcast — raw plaintext bytes.
-            http.post(DOCUMENTS + "/" + doc.id() + "/file",
-                req.fileBytes,
-                req.fileMime != null ? req.fileMime : "application/octet-stream");
+            // Broadcast — plaintext: POST {"file": "<base64 data URI>", "original_name"}.
+            // The API rejected the old raw-bytes body (documents.invalid_payload: file required).
+            http.post(fileUrl, Map.of(
+                "file", dataUri(req.fileBytes, req.fileMime),
+                "original_name", req.name));
         }
         return doc;
     }
