@@ -488,6 +488,10 @@ public final class Client {
             target = Map.of("connection_id", req.connectionId);
         } else if (req.personUserId != null) {
             target = Map.of("person_user_id", req.personUserId);
+        } else if (req.shareCode != null && !req.shareCode.isEmpty()) {
+            // A share_code target is PER-PERSON (encrypted to that recipient), not a
+            // broadcast — the recipient handle alone identifies the person.
+            target = Map.of("share_code", req.shareCode);
         } // else: broadcast — target stays null
 
         boolean perPerson = target != null;

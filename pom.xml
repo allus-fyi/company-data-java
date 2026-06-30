@@ -15,7 +15,7 @@
   -->
   <groupId>fyi.allme.allus</groupId>
   <artifactId>company-data</artifactId>
-  <version>0.0.9</version>
+  <version>0.0.10</version>
   <packaging>jar</packaging>
 
   <name>allus-company-data</name>
