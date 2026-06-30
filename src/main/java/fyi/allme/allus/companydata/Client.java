@@ -560,7 +560,7 @@ public final class Client {
             // The API rejected the old raw-bytes body (documents.invalid_payload: file required).
             http.post(fileUrl, Map.of(
                 "file", dataUri(req.fileBytes, req.fileMime),
-                "original_name", req.name));
+                "original_name", broadcastOriginalName(req.fileName, req.name, req.fileMime)));
         }
         return doc;
     }
@@ -912,6 +912,7 @@ public final class Client {
         private Object jsonValue;
         private byte[] fileBytes;
         private String fileMime;
+        private String fileName;             // explicit original_name for a broadcast file upload
         private boolean requiresSignature = false;   // contract: the person must sign (step-up)
         private boolean requiresAcceptance = false;  // contract: the person must accept
         private Map<String, Object> metadata;
@@ -932,6 +933,7 @@ public final class Client {
         public CreateDocumentRequest jsonValue(Object v) { this.jsonValue = v; return this; }
         public CreateDocumentRequest fileBytes(byte[] v) { this.fileBytes = v; return this; }
         public CreateDocumentRequest fileMime(String v) { this.fileMime = v; return this; }
+        public CreateDocumentRequest fileName(String v) { this.fileName = v; return this; }
         public CreateDocumentRequest requiresSignature(boolean v) { this.requiresSignature = v; return this; }
         public CreateDocumentRequest requiresAcceptance(boolean v) { this.requiresAcceptance = v; return this; }
         public CreateDocumentRequest metadata(Map<String, Object> v) { this.metadata = v; return this; }
@@ -1049,6 +1051,39 @@ public final class Client {
     private static String dataUri(byte[] fileBytes, String mime) {
         String b64 = java.util.Base64.getEncoder().encodeToString(fileBytes);
         return "data:" + (mime != null ? mime : "application/octet-stream") + ";base64," + b64;
+    }
+
+    /** Allowed broadcast-document MIME → file extension (mirrors the API's allowlist). */
+    private static final Map<String, String> MIME_EXT = Map.of(
+        "application/pdf", "pdf",
+        "application/msword", "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx",
+        "application/vnd.ms-excel", "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx",
+        "image/png", "png",
+        "image/jpeg", "jpg");
+
+    private static final java.util.Set<String> ALLOWED_DOC_EXTS =
+        java.util.Set.of("pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg");
+
+    /**
+     * {@code original_name} for a broadcast file upload. The API validates its extension
+     * against an allowlist, but {@code name} is a human label that often has no extension.
+     * Use an explicit {@code fileName}; else keep {@code name} if it already ends in an
+     * allowed extension; else append the extension derived from {@code fileMime}
+     * (so {@code "Price list"} + {@code application/pdf} → {@code "Price list.pdf"}).
+     */
+    private static String broadcastOriginalName(String fileName, String name, String fileMime) {
+        if (fileName != null && !fileName.isEmpty()) {
+            return fileName;
+        }
+        int dot = name.lastIndexOf('.');
+        String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT) : "";
+        if (ALLOWED_DOC_EXTS.contains(ext)) {
+            return name;
+        }
+        String derived = MIME_EXT.get(fileMime == null ? "" : fileMime.toLowerCase(java.util.Locale.ROOT));
+        return derived != null ? name + "." + derived : name;
     }
 
     private static java.security.interfaces.RSAPrivateKey loadServiceKey(Config config) {

@@ -555,11 +555,57 @@ class ClientTest {
         assertTrue(calls.get(1).url().endsWith("/documents/f1/file"));
         @SuppressWarnings("unchecked")
         Map<String, Object> fileBody = (Map<String, Object>) calls.get(1).jsonBody();
-        assertEquals("C", fileBody.get("original_name"));
+        // Extensionless name "C" + application/pdf → "C.pdf" (the API validates the extension).
+        assertEquals("C.pdf", fileBody.get("original_name"));
         String file = (String) fileBody.get("file");
         assertTrue(file.startsWith("data:application/pdf;base64,"));
         assertArrayEquals("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8),
             java.util.Base64.getDecoder().decode(file.split(",", 2)[1]));
+    }
+
+    @Test
+    void broadcastFileNameAlreadyHasAllowedExtensionUnchanged(@TempDir Path tmp) throws Exception {
+        assertEquals("price.pdf", broadcastOriginalName(tmp, "price.pdf", "application/pdf", null));
+    }
+
+    @Test
+    void broadcastFileExtensionlessNameDerivesFromMime(@TempDir Path tmp) throws Exception {
+        assertEquals("Price list.xlsx", broadcastOriginalName(
+            tmp, "Price list", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", null));
+    }
+
+    @Test
+    void broadcastFileNameOverridesNameAndMime(@TempDir Path tmp) throws Exception {
+        assertEquals("override.pdf",
+            broadcastOriginalName(tmp, "Price list", "application/pdf", "override.pdf"));
+    }
+
+    /** Run a broadcast file createDocument and return the {@code original_name} sent to /file. */
+    private String broadcastOriginalName(Path tmp, String name, String fileMime, String fileName)
+            throws Exception {
+        List<RoutingTransport.WriteCall> calls = new ArrayList<>();
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            calls.add(new RoutingTransport.WriteCall(method, url, jsonBody, data));
+            if (url.endsWith("/documents")) {
+                return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                    "id", "f1", "kind", "document", "name", name,
+                    "status", "active", "payload_kind", "file", "is_private", false,
+                    "value", Map.of("_pending", true))));
+            }
+            return FakeTransport.json(200, "{\"id\":\"f1\"}");
+        };
+        RoutingTransport t = new RoutingTransport(noGet(), wr);
+        Client client = new Client(config(tmp), t);
+        Client.CreateDocumentRequest req = Client.CreateDocumentRequest.builder()
+            .name(name).payloadKind("file")
+            .fileBytes("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8)).fileMime(fileMime);
+        if (fileName != null) {
+            req.fileName(fileName);
+        }
+        client.createDocument(req);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fileBody = (Map<String, Object>) calls.get(1).jsonBody();
+        return (String) fileBody.get("original_name");
     }
 
     @Test
