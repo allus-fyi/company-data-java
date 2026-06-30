@@ -547,20 +547,33 @@ public final class Client {
         Object created = http.post(DOCUMENTS, body);
         Document doc = Document.fromApi(docObj(created), this::decryptValue);
         String fileUrl = DOCUMENTS + "/" + doc.id() + "/file";
-        if (perPerson) {
-            // EVERY per-person file doc is E2E-encrypted: wrap the file envelope string,
-            // encrypt it for the recipient, then POST {"value": "<wrapper JSON string>"}.
-            // The /file endpoint requires `value` to be a STRING (isValidEncryptedBlob),
-            // so the wrapper map is serialized to JSON; the bare wrapper was rejected (400).
-            String envelope = Json.write(Map.of("file", dataUri(req.fileBytes, req.fileMime)));
-            Map<String, Object> wrapper = Crypto.encryptForPublicKey(envelope, pubkey);
-            http.post(fileUrl, Map.of("value", Json.write(wrapper)));
-        } else {
-            // Broadcast — plaintext: POST {"file": "<base64 data URI>", "original_name"}.
-            // The API rejected the old raw-bytes body (documents.invalid_payload: file required).
-            http.post(fileUrl, Map.of(
-                "file", dataUri(req.fileBytes, req.fileMime),
-                "original_name", broadcastOriginalName(req.fileName, req.name, req.fileMime)));
+        // The metadata row exists before the bytes are uploaded; if the upload fails,
+        // best-effort delete it so a failed createDocument leaves no dangling
+        // {"_pending": true} document. Cleanup errors are swallowed and the ORIGINAL
+        // upload error is re-raised.
+        try {
+            if (perPerson) {
+                // EVERY per-person file doc is E2E-encrypted: wrap the file envelope string,
+                // encrypt it for the recipient, then POST {"value": "<wrapper JSON string>"}.
+                // The /file endpoint requires `value` to be a STRING (isValidEncryptedBlob),
+                // so the wrapper map is serialized to JSON; the bare wrapper was rejected (400).
+                String envelope = Json.write(Map.of("file", dataUri(req.fileBytes, req.fileMime)));
+                Map<String, Object> wrapper = Crypto.encryptForPublicKey(envelope, pubkey);
+                http.post(fileUrl, Map.of("value", Json.write(wrapper)));
+            } else {
+                // Broadcast — plaintext: POST {"file": "<base64 data URI>", "original_name"}.
+                // The API rejected the old raw-bytes body (documents.invalid_payload: file required).
+                http.post(fileUrl, Map.of(
+                    "file", dataUri(req.fileBytes, req.fileMime),
+                    "original_name", broadcastOriginalName(req.fileName, req.name, req.fileMime)));
+            }
+        } catch (RuntimeException e) {
+            try {
+                deleteDocument(doc.id());
+            } catch (RuntimeException ignored) {
+                // best-effort cleanup — swallow and re-raise the original upload error
+            }
+            throw e;
         }
         return doc;
     }

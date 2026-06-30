@@ -649,6 +649,41 @@ class ClientTest {
     }
 
     @Test
+    void createDocumentFileUploadFailureDeletesDanglingDoc(@TempDir Path tmp) throws Exception {
+        // The metadata row is created first; if the /file upload fails, the just-created
+        // {"_pending": true} document must be best-effort deleted and the original error re-raised.
+        List<RoutingTransport.WriteCall> calls = new ArrayList<>();
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            calls.add(new RoutingTransport.WriteCall(method, url, jsonBody, data));
+            if (url.endsWith("/documents")) {
+                return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                    "id", "f1", "kind", "document", "name", "C",
+                    "status", "active", "payload_kind", "file", "is_private", false,
+                    "value", Map.of("_pending", true))));
+            }
+            if (url.endsWith("/documents/f1/file")) {
+                return FakeTransport.json(500, "{\"error\":\"boom\"}"); // upload fails → ApiException
+            }
+            // DELETE /documents/f1 — best-effort cleanup
+            return FakeTransport.json(200, "{}");
+        };
+        RoutingTransport t = new RoutingTransport(noGet(), wr);
+        Client client = new Client(config(tmp), t);
+
+        assertThrows(ApiException.class, () -> client.createDocument(
+            Client.CreateDocumentRequest.builder()
+                .name("C").payloadKind("file")
+                .fileBytes("%PDF-1.4 x".getBytes(StandardCharsets.UTF_8)).fileMime("application/pdf")));
+
+        // Sequence: create POST → /file POST (failed) → DELETE of the dangling doc.
+        assertTrue(calls.get(0).url().endsWith("/documents"));
+        assertTrue(calls.get(1).url().endsWith("/documents/f1/file"));
+        assertTrue(calls.stream().anyMatch(c ->
+            "DELETE".equals(c.method()) && c.url().endsWith("/documents/f1")),
+            "the dangling document must be DELETEd after a failed file upload");
+    }
+
+    @Test
     void documentVerbsHitRightPath(@TempDir Path tmp) throws Exception {
         List<Object[]> seen = new ArrayList<>();
         BiFunction<String, Map<String, String>, Response> get = (url, params) -> {
