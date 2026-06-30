@@ -17,8 +17,9 @@ import java.util.Map;
  * profile share code, present on every event (may be {@code null}).
  * {@link #slug()}/{@link #value()}/{@link #live()} are present only on
  * {@code field_updated} (connection/consent events carry no slot/value).
- * {@link #live()} is {@code null} when absent. {@link #documentId()}/{@link #status()}
- * are set only on {@code document_status_changed}.
+ * {@link #live()} is {@code null} when absent. {@link #documentId()}/{@link #status()}/
+ * {@link #note()} are set only on {@code document_status_changed} ({@link #note()} is the
+ * person's optional cancellation note).
  */
 public record Change(
     String id,
@@ -31,6 +32,7 @@ public record Change(
     String documentId,
     String status,
     String action,   // set on document_status_changed for a contract: signed | accepted | cancelled
+    String note,     // set on document_status_changed: the person's optional cancellation note
     String requestId, // set on connection_request_accepted | connection_request_rejected
     OffsetDateTime at,
     Map<String, Object> raw
@@ -55,6 +57,7 @@ public record Change(
         boolean isDocStatus = "document_status_changed".equals(event);
         String status = isDocStatus ? Parse.str(obj.get("status")) : null;
         String action = isDocStatus ? Parse.str(obj.get("action")) : null;
+        String note = isDocStatus ? Parse.str(obj.get("note")) : null;
 
         // connection_request_accepted/_rejected carry the request_id (no slot/value).
         String requestId = ("connection_request_accepted".equals(event)
@@ -64,7 +67,7 @@ public record Change(
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), slug, value, live,
-            documentId, status, action, requestId,
+            documentId, status, action, note, requestId,
             Parse.isoDateTime(obj.get("at")), obj);
     }
 

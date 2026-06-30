@@ -392,6 +392,7 @@ class ModelsTest {
         assertEquals("ended", chg.status());
         assertEquals("u-1", chg.personId());
         assertEquals("ABC123", chg.shareCode());
+        assertNull(chg.note());
         assertNull(chg.slug());
         assertNull(chg.value());
         assertNull(chg.live());
@@ -414,7 +415,27 @@ class ModelsTest {
         assertEquals("signed", chg.action());
         assertEquals("doc-7", chg.documentId());
         assertEquals("active", chg.status());
+        assertNull(chg.note());   // no note on a signed event
         assertNull(chg.slug());
+    }
+
+    @Test
+    void changeDocumentStatusChangedCarriesCancellationNote() {
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("id", "chg-cancel");
+        ev.put("event", "document_status_changed");
+        ev.put("person_user_id", "u-3");
+        ev.put("action", "cancelled");
+        ev.put("note", "Too expensive");
+        ev.put("document_id", "doc-5");
+        ev.put("status", "ended");
+        ev.put("at", "2026-06-22T10:00:00Z");
+
+        Change chg = Change.listFromApi(Map.of("changes", List.of(ev)), deps).get(0);
+        assertEquals("cancelled", chg.action());
+        assertEquals("Too expensive", chg.note());
+        assertEquals("ended", chg.status());
     }
 
     @Test
