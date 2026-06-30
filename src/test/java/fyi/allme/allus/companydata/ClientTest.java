@@ -494,6 +494,47 @@ class ClientTest {
     }
 
     @Test
+    void createDocumentShareCodeOnlyIsPerPersonEncrypted(@TempDir Path tmp) throws Exception {
+        String spki = vectorPubSpkiB64();
+        int[] keysFetched = {0};
+        BiFunction<String, Map<String, String>, Response> get = (url, params) -> {
+            assertTrue(url.endsWith("/api/keys/ABC123")); // recipient key by share_code
+            keysFetched[0]++;
+            return FakeTransport.json(200, fyi.allme.allus.companydata.internal.Json.write(
+                Map.of("public_key", spki)));
+        };
+        Object[] captured = new Object[1];
+        RoutingTransport.WriteRouter wr = (method, url, jsonBody, data) -> {
+            captured[0] = jsonBody;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> b = (Map<String, Object>) jsonBody;
+            return FakeTransport.json(201, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                "id", "d3", "kind", "document", "name", "SC",
+                "status", "active", "payload_kind", "json", "is_private", false,
+                "value", b.get("value"))));
+        };
+        RoutingTransport t = new RoutingTransport(get, wr);
+        Client client = new Client(config(tmp), t);
+        Document doc = client.createDocument(Client.CreateDocumentRequest.builder()
+            .name("SC").payloadKind("json").jsonValue(Map.of("plan", "pro"))
+            .shareCode("ABC123")); // ONLY a share_code — no connection/person id
+
+        assertEquals(1, keysFetched[0]); // (a) fetched the recipient key
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) captured[0];
+        // (b) target is the per-person share_code target, NOT null/broadcast
+        assertEquals(Map.of("share_code", "ABC123"), body.get("target"));
+        // (c) value is the encrypted wrapper, not plaintext
+        @SuppressWarnings("unchecked")
+        Map<String, Object> val = (Map<String, Object>) body.get("value");
+        assertEquals(1, ((Number) val.get("_enc")).intValue());
+        assertTrue(val.containsKey("k") && val.containsKey("iv") && val.containsKey("d"));
+        assertEquals(Map.of("plan", "pro"),
+            fyi.allme.allus.companydata.internal.Json.parse(decryptVectorWrapper(val)));
+        assertEquals("d3", doc.id());
+    }
+
+    @Test
     void createDocumentPrivateBroadcastThrows(@TempDir Path tmp) throws Exception {
         RoutingTransport t = new RoutingTransport(noGet(), (m, u, j, d) -> {
             throw new AssertionError("should not POST");
