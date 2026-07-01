@@ -36,6 +36,7 @@ public record Change(
     String method,        // set on a signature: biometric | twofa | email | custodian
     String contentSha256, // set on a signature: SHA-256 of the signed content
     String signedAt,      // set on a signature: ISO timestamp the signature was recorded
+    String cancelEffectiveDate, // set on a cancelled document_status_changed: ISO date the cancellation takes effect
     String requestId, // set on connection_request_accepted | connection_request_rejected
     OffsetDateTime at,
     Map<String, Object> raw
@@ -64,6 +65,7 @@ public record Change(
         String method = isDocStatus ? Parse.str(obj.get("method")) : null;
         String contentSha256 = isDocStatus ? Parse.str(obj.get("content_sha256")) : null;
         String signedAt = isDocStatus ? Parse.str(obj.get("signed_at")) : null;
+        String cancelEffectiveDate = isDocStatus ? Parse.str(obj.get("cancel_effective_date")) : null;
 
         // connection_request_accepted/_rejected carry the request_id (no slot/value).
         String requestId = ("connection_request_accepted".equals(event)
@@ -73,7 +75,7 @@ public record Change(
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), slug, value, live,
-            documentId, status, action, note, method, contentSha256, signedAt, requestId,
+            documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate, requestId,
             Parse.isoDateTime(obj.get("at")), obj);
     }
 
