@@ -19,6 +19,9 @@ import java.util.Map;
  *
  * <p>{@code answers} is the raw list of {@code {slug, for_user_id, value}} rows; the client
  * decrypts the company's copies on demand.
+ *
+ * <p>{@code referenceDate} is the run's pinned "today" ({@code YYYY-MM-DD}), used when computing
+ * flow constants; {@code null} when the API does not carry one.
  */
 public record FlowRun(
     String id,
@@ -32,6 +35,7 @@ public record FlowRun(
     String currentNode,
     String documentId,
     String outputMode,
+    String referenceDate,
     Map<String, Object> definition,
     List<Map<String, Object>> answers,
     OffsetDateTime createdAt,
@@ -105,6 +109,7 @@ public record FlowRun(
             Parse.str(obj.get("current_node")),
             Parse.str(obj.get("document_id")),
             outputMode,
+            Parse.str(obj.get("reference_date")),
             definition,
             answers,
             Parse.isoDateTime(obj.get("created_at")),
