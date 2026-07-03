@@ -35,7 +35,7 @@ class FlowConditionTest {
     @SuppressWarnings("unchecked")
     Stream<DynamicTest> vectorCases() throws Exception {
         List<Map<String, Object>> cases = cases();
-        assertEquals(27, cases.size(), "expected 27 vector cases");
+        assertEquals(35, cases.size(), "expected 35 vector cases");
         return cases.stream().map(c -> DynamicTest.dynamicTest(
             (String) c.get("name"),
             () -> {

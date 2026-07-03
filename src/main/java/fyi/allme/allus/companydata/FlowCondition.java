@@ -92,6 +92,12 @@ public final class FlowCondition {
                 return inList(target, val);
             case "nin":
                 return !inList(target, val);
+            // #102 substring ops (text): contains needs an answer (like in); not_contains is
+            // true when unanswered (like nin). Case-sensitive; empty needle counts as contained.
+            case "contains":
+                return answered(val) && str(val).contains(str(target));
+            case "not_contains":
+                return !(answered(val) && str(val).contains(str(target)));
             default:
                 break;
         }
