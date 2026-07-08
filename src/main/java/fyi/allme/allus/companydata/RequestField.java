@@ -19,6 +19,8 @@ public record RequestField(
     String type,
     boolean oneTime,
     boolean mandatory,
+    /** Which customer TYPE this row applies to: "person"|"company"|"both" (B2B, #163); null on older API. */
+    String audience,
     Map<String, Object> raw
 ) {
     static RequestField fromApi(Map<String, Object> obj) {
@@ -28,6 +30,7 @@ public record RequestField(
             Parse.str(obj.get("type")),
             Parse.bool(obj.get("one_time")),
             Parse.bool(obj.get("mandatory_provide")) || Parse.bool(obj.get("mandatory_connected")),
+            Parse.str(obj.get("audience")),
             obj);
     }
 

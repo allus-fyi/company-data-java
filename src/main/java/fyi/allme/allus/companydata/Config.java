@@ -36,6 +36,8 @@ public final class Config {
     private final String clientId;
     private final String clientSecret;
     private final String servicePrivateKey;   // path to the OpenSSL-encrypted PKCS#8 PEM
+    private final String customerClientId;     // #168 customer role: the acct_* client id
+    private final String customerClientSecret; // #168 customer role: the acct_* client secret
     private final String keyPassphrase;        // decrypts the service PEM in memory
 
     private final String accountPrivateKey;    // optional — only for encrypt_payload webhooks
@@ -56,6 +58,7 @@ public final class Config {
 
     private Config(String apiUrl, String clientId, String clientSecret,
                    String servicePrivateKey, String keyPassphrase,
+                   String customerClientId, String customerClientSecret,
                    String accountPrivateKey, String accountPassphrase,
                    Map<String, String> webhooks,
                    String webhookBearerToken, Map<String, String> webhookBasic,
@@ -66,6 +69,8 @@ public final class Config {
         this.clientSecret = clientSecret;
         this.servicePrivateKey = servicePrivateKey;
         this.keyPassphrase = keyPassphrase;
+        this.customerClientId = customerClientId;
+        this.customerClientSecret = customerClientSecret;
         this.accountPrivateKey = accountPrivateKey;
         this.accountPassphrase = accountPassphrase;
         this.webhooks = webhooks;
@@ -100,6 +105,28 @@ public final class Config {
         return build(Map.of());
     }
 
+    /** Load a CUSTOMER-role config (#168) from a JSON file — requires the acct_* pair
+     *  + account key, not the service PEM. Env vars override file values. */
+    public static Config fromCustomerFile(String path) {
+        Map<String, Object> data;
+        try {
+            String text = Files.readString(Path.of(path), StandardCharsets.UTF_8);
+            data = Json.parseObject(text);
+        } catch (NoSuchFileException exc) {
+            throw new ConfigException("config file not found: " + path, exc);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exc) {
+            throw new ConfigException("config file is not valid JSON: " + path + ": " + exc.getMessage(), exc);
+        } catch (IOException exc) {
+            throw new ConfigException("could not read config file: " + path + ": " + exc.getMessage(), exc);
+        }
+        return doBuild(data, System::getenv, "customer");
+    }
+
+    /** Build a CUSTOMER-role config entirely from {@code ALLUS_*} env vars. */
+    public static Config fromCustomerEnv() {
+        return doBuild(Map.of(), System::getenv, "customer");
+    }
+
     /** Build a Config directly (used by tests + advanced embedding). */
     public static Builder builder() {
         return new Builder();
@@ -119,16 +146,18 @@ public final class Config {
 
     // Package-private: env-resolver-injectable build (config-test only).
     static Config build(Map<String, Object> data, Function<String, String> envLookup) {
-        return doBuild(data, envLookup);
+        return doBuild(data, envLookup, "service");
     }
 
-    private static Config doBuild(Map<String, Object> data, Function<String, String> env) {
+    private static Config doBuild(Map<String, Object> data, Function<String, String> env, String role) {
         // Scalar fields: env var (if set) overrides the file value.
         String apiUrl = pick(envOf(env, "ALLUS_API_URL"), data.get("api_url"));
         String clientId = pick(envOf(env, "ALLUS_CLIENT_ID"), data.get("client_id"));
         String clientSecret = pick(envOf(env, "ALLUS_CLIENT_SECRET"), data.get("client_secret"));
         String servicePrivateKey = pick(envOf(env, "ALLUS_SERVICE_PRIVATE_KEY"), data.get("service_private_key"));
         String keyPassphrase = pick(envOf(env, "ALLUS_KEY_PASSPHRASE"), data.get("key_passphrase"));
+        String customerClientId = pick(envOf(env, "ALLUS_CUSTOMER_CLIENT_ID"), data.get("customer_client_id"));
+        String customerClientSecret = pick(envOf(env, "ALLUS_CUSTOMER_CLIENT_SECRET"), data.get("customer_client_secret"));
         String accountPrivateKey = pick(envOf(env, "ALLUS_ACCOUNT_PRIVATE_KEY"), data.get("account_private_key"));
         String accountPassphrase = pick(envOf(env, "ALLUS_ACCOUNT_PASSPHRASE"), data.get("account_passphrase"));
         String cacheDir = pick(envOf(env, "ALLUS_CACHE_DIR"), data.get("cache_dir"));
@@ -218,10 +247,16 @@ public final class Config {
         // Required fields (fail fast).
         Map<String, String> required = new LinkedHashMap<>();
         required.put("api_url", apiUrl);
-        required.put("client_id", clientId);
-        required.put("client_secret", clientSecret);
-        required.put("service_private_key", servicePrivateKey);
-        required.put("key_passphrase", keyPassphrase);
+        if ("customer".equals(role)) {
+            required.put("customer_client_id", customerClientId);
+            required.put("customer_client_secret", customerClientSecret);
+            required.put("account_private_key", accountPrivateKey);
+        } else {
+            required.put("client_id", clientId);
+            required.put("client_secret", clientSecret);
+            required.put("service_private_key", servicePrivateKey);
+            required.put("key_passphrase", keyPassphrase);
+        }
         StringBuilder missing = new StringBuilder();
         for (Map.Entry<String, String> e : required.entrySet()) {
             if (e.getValue() == null || e.getValue().isEmpty()) {
@@ -249,6 +284,7 @@ public final class Config {
         }
 
         return new Config(apiUrl, clientId, clientSecret, servicePrivateKey, keyPassphrase,
+            customerClientId, customerClientSecret,
             accountPrivateKey, accountPassphrase, webhooks,
             webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
             cacheDir, format);
@@ -286,6 +322,23 @@ public final class Config {
 
     public String servicePrivateKey() {
         return servicePrivateKey;
+    }
+
+    public String customerClientId() {
+        return customerClientId;
+    }
+
+    public String customerClientSecret() {
+        return customerClientSecret;
+    }
+
+    /** #168: an http-facing copy whose clientId/secret are the customer acct_* pair. */
+    Config toCustomerHttpConfig() {
+        return new Config(apiUrl, customerClientId, customerClientSecret, null, null,
+            customerClientId, customerClientSecret,
+            accountPrivateKey, accountPassphrase, webhooks,
+            webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
+            cacheDir, format);
     }
 
     public String keyPassphrase() {
@@ -394,6 +447,16 @@ public final class Config {
 
         public Builder servicePrivateKey(String v) {
             data.put("service_private_key", v);
+            return this;
+        }
+
+        public Builder customerClientId(String v) {
+            data.put("customer_client_id", v);
+            return this;
+        }
+
+        public Builder customerClientSecret(String v) {
+            data.put("customer_client_secret", v);
             return this;
         }
 

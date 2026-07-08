@@ -19,6 +19,10 @@ public record Connection(
     String displayName,
     OffsetDateTime connectedAt,
     Map<String, Value> values,
+    /** The connected customer's TYPE: "person"|"company" (B2B, #163); null on older API. */
+    String customerType,
+    /** The customer's profile share code (previously only via {@code raw}); null when absent. */
+    String shareCode,
     Map<String, Object> raw
 ) {
     /**
@@ -54,7 +58,11 @@ public record Connection(
                 }
             }
         }
-        return new Connection(connId, personId, displayName, connectedAt, values, obj);
+        String customerType = firstNonNull(
+            Parse.str(obj.get("customer_type")), Parse.str(id.get("customer_type")));
+        String shareCode = firstNonNull(
+            Parse.str(obj.get("share_code")), Parse.str(id.get("share_code")));
+        return new Connection(connId, personId, displayName, connectedAt, values, customerType, shareCode, obj);
     }
 
     private static String firstNonNull(String... candidates) {

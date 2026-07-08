@@ -372,6 +372,66 @@ class ModelsTest {
         assertNull(changes.get(1).shareCode());
     }
 
+    /** B2B (#163): a request row carries audience; absent -> null. */
+    @Test
+    void requestFieldIncludesAudience() {
+        Map<String, Object> billing = new LinkedHashMap<>();
+        billing.put("slug", "billing");
+        billing.put("label", "Billing");
+        billing.put("type", "email");
+        billing.put("audience", "company");
+        Map<String, Object> ref = new LinkedHashMap<>();
+        ref.put("slug", "ref");
+        ref.put("label", "Ref");
+        ref.put("type", "text");
+        List<RequestField> fields = RequestField.listFromApi(Map.of("request_fields", List.of(billing, ref)));
+        assertEquals("company", fields.get(0).audience());
+        assertNull(fields.get(1).audience());
+    }
+
+    /** B2B (#163): a change event carries customer_type; absent -> null. */
+    @Test
+    void changeIncludesCustomerType() {
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        Map<String, Object> co = new LinkedHashMap<>();
+        co.put("id", "chg-1");
+        co.put("event", "connection_created");
+        co.put("person_user_id", "co-1");
+        co.put("customer_type", "company");
+        co.put("at", "2026-07-07T12:00:00Z");
+        Map<String, Object> noType = new LinkedHashMap<>();
+        noType.put("id", "chg-2");
+        noType.put("event", "connection_created");
+        noType.put("person_user_id", "person-2");
+        noType.put("at", "2026-07-07T12:00:00Z");
+        List<Change> changes = Change.listFromApi(Map.of("changes", List.of(co, noType)), deps);
+        assertEquals("company", changes.get(0).customerType());
+        assertNull(changes.get(1).customerType());
+    }
+
+    /** B2B (#163): a connection carries customer_type + share_code (both nullable). */
+    @Test
+    void connectionIncludesCustomerTypeAndShareCode() {
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        Map<String, Object> obj = new LinkedHashMap<>();
+        obj.put("connection_id", "c-1");
+        obj.put("user_id", "co-9");
+        obj.put("customer_type", "company");
+        obj.put("share_code", "PARTNER");
+        obj.put("values", Map.of());
+        Connection conn = Connection.fromApi(obj, deps, null);
+        assertEquals("company", conn.customerType());
+        assertEquals("PARTNER", conn.shareCode());
+
+        Map<String, Object> bareObj = new LinkedHashMap<>();
+        bareObj.put("connection_id", "c-2");
+        bareObj.put("user_id", "p-1");
+        bareObj.put("values", Map.of());
+        Connection bare = Connection.fromApi(bareObj, deps, null);
+        assertNull(bare.customerType());
+        assertNull(bare.shareCode());
+    }
+
     // ── document_status_changed change + Document model ─────────────────────────
 
     @Test

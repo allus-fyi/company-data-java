@@ -26,6 +26,8 @@ public record Change(
     String event,
     String personId,
     String shareCode,
+    /** The customer's TYPE: "person"|"company" (B2B, #163); null on older API. */
+    String customerType,
     String slug,
     Object value,
     Boolean live,
@@ -74,7 +76,7 @@ public record Change(
 
         return new Change(
             Parse.str(obj.get("id")), event, personId,
-            Parse.str(obj.get("share_code")), slug, value, live,
+            Parse.str(obj.get("share_code")), Parse.str(obj.get("customer_type")), slug, value, live,
             documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate, requestId,
             Parse.isoDateTime(obj.get("at")), obj);
     }
