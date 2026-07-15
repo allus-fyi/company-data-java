@@ -4,6 +4,7 @@ import fyi.allme.allus.companydata.internal.Json;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -42,6 +43,11 @@ public final class FieldValidation {
 
     private static final List<String> GENDER = List.of("Male", "Female", "Non-binary", "Prefer not to say");
 
+    // #303: country/nationality store an ISO 3166-1 alpha-2 code; address state = USPS 2-letter code.
+    // The lists come from the generated country data (do NOT inline them — they would rot).
+    private static final Set<String> COUNTRY_SET = Set.copyOf(CountryData.COUNTRY_CODES);
+    private static final Set<String> US_STATE_SET = Set.copyOf(CountryData.US_STATE_CODES);
+
     /** A structured sub-field rule. {@code any()} = any non-empty string. */
     private record Sub(boolean isInt, Pattern re, String kind) {
     }
@@ -66,8 +72,8 @@ public final class FieldValidation {
     private static final Map<String, Map<String, Sub>> OBJ = Map.of(
         "address", Map.of(
             "postal_code", re(POSTAL_RE),
-            "street", any(), "building_number", any(), "affix", any(),
-            "city", any(), "state", any(), "country", any()),
+            "country", kind("countryCode"), "state", kind("usState"),
+            "street", any(), "building_number", any(), "affix", any(), "city", any()),
         "creditcard", Map.of(
             "number", kind("card"),
             "expiry", re(EXPIRY_RE),
@@ -102,7 +108,9 @@ public final class FieldValidation {
         Map.entry("document", new Rule("object", null, null)),
         Map.entry("legal_document", new Rule("object", null, null)),
         Map.entry("number", new Rule("number", null, null)),
-        Map.entry("boolean", new Rule("boolean", null, null)));
+        Map.entry("boolean", new Rule("boolean", null, null)),
+        Map.entry("country", new Rule("countryCode", null, null)),
+        Map.entry("nationality", new Rule("countryCode", null, null)));
     // text + unknown => no rule => accept anything
 
     private static boolean luhnOk(String digits) {
@@ -181,6 +189,10 @@ public final class FieldValidation {
             }
             case "boolean":
                 return "true".equals(value) || "false".equals(value);
+            case "countryCode":
+                return COUNTRY_SET.contains(value);
+            case "usState":
+                return US_STATE_SET.contains(value);
             default:
                 return true;
         }
@@ -254,5 +266,15 @@ public final class FieldValidation {
     /** Returns null when valid, else the {@code fieldType} tag (for i18n mapping). */
     public static String error(String fieldType, String value) {
         return isValid(fieldType, value) ? null : fieldType;
+    }
+
+    /** True if {@code code} is an assigned ISO 3166-1 alpha-2 country code (#303). */
+    public static boolean isValidCountryCode(String code) {
+        return code != null && COUNTRY_SET.contains(code);
+    }
+
+    /** The ITU E.164 dial code (digits only, no {@code +}) for a country code, or null (#303). */
+    public static String dialCodeFor(String code) {
+        return code == null ? null : CountryData.DIAL_CODES.get(code);
     }
 }
