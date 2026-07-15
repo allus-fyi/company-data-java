@@ -38,6 +38,8 @@ public final class CustomerClient {
     private final ModelDeps deps;
     private final Map<String, RSAPublicKey> pubKeyCache = new LinkedHashMap<>();
     private final Map<String, RSAPublicKey> serviceKeyCache = new LinkedHashMap<>();
+    // "companyCode/serviceCode" → {request_field_id: field_type}, for typed-answer validation (#302).
+    private final Map<String, Map<String, String>> requestTypeCache = new LinkedHashMap<>();
     private Pump pump;
 
     public CustomerClient(Config config) {
@@ -264,10 +266,54 @@ public final class CustomerClient {
         return body;
     }
 
+    /**
+     * Resolve {@code {request_field_id: field_type}} for a service from the connect-screen lookup,
+     * cached per company/service. Best-effort — a lookup failure yields an empty map so
+     * typed-answer validation is simply skipped (#302).
+     */
+    private Map<String, String> requestFieldTypes(String companyCode, String serviceCode) {
+        String key = companyCode + "/" + serviceCode;
+        Map<String, String> cached = requestTypeCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        Map<String, String> map = new LinkedHashMap<>();
+        try {
+            Object body = http.get(CONN + "/lookup/" + companyCode + "/" + serviceCode);
+            if (body instanceof Map<?, ?> m && m.get("request_fields") instanceof List<?> rows) {
+                for (Object r : rows) {
+                    if (r instanceof Map<?, ?> row) {
+                        Object id = row.get("id");
+                        Object ft = row.get("field_type");
+                        if (!(ft instanceof String) || ((String) ft).isEmpty()) {
+                            ft = row.get("type");
+                        }
+                        if (id instanceof String is && !is.isEmpty() && ft instanceof String fs && !fs.isEmpty()) {
+                            map.put(is, fs);
+                        }
+                    }
+                }
+            }
+        } catch (RuntimeException exc) {
+            // best-effort — skip validation when the lookup is unavailable
+        }
+        requestTypeCache.put(key, map);
+        return map;
+    }
+
     private List<Object> encryptTyped(List<TypedAnswer> answers, String companyCode, String serviceCode) {
         RSAPublicKey pub = serviceKey(companyCode, serviceCode);
         if (pub == null) {
             throw new ConfigException("no service key for " + companyCode + "/" + serviceCode);
+        }
+        // #302: validate each typed answer against its request row's field type, BEFORE encryption.
+        // Skip an answer whose type can't be resolved (do not invent one).
+        Map<String, String> types = requestFieldTypes(companyCode, serviceCode);
+        for (TypedAnswer a : answers) {
+            String ft = types.get(a.requestFieldId());
+            if (ft != null && !FieldValidation.isValid(ft, a.value())) {
+                throw new ValidationException(a.requestFieldId(), ft);
+            }
         }
         List<Object> out = new ArrayList<>();
         for (TypedAnswer a : answers) {

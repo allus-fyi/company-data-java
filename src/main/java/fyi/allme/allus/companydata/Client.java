@@ -791,6 +791,18 @@ public final class Client {
         full.putAll(fill);
         java.security.interfaces.RSAPublicKey svcPub = servicePublicKey();
 
+        // #302: validate each freshly-typed answer against its field type from the pinned
+        // definition, BEFORE encryption. Skip when the type can't be resolved.
+        for (Map.Entry<String, Object> e : fill.entrySet()) {
+            String ft = fieldTypeForSlug(run.definition(), e.getKey());
+            if (ft != null && !ft.isEmpty()) {
+                String plainForCheck = e.getValue() instanceof String s ? s : Json.write(e.getValue());
+                if (!FieldValidation.isValid(ft, plainForCheck)) {
+                    throw new ValidationException(e.getKey(), ft);
+                }
+            }
+        }
+
         List<Object> answersOut = new ArrayList<>();
         for (Map.Entry<String, Object> e : fill.entrySet()) {
             String slug = e.getKey();
@@ -1052,6 +1064,43 @@ public final class Client {
             }
         }
         return 0;
+    }
+
+    /**
+     * Resolve a field element's {@code field_type} from the pinned flow definition by scanning
+     * every node's elements for a {@code kind:"field"} element with the given slug. Returns null
+     * when the slug is not a field element (or elements are absent) — callers then SKIP validation
+     * rather than invent a type (#302).
+     */
+    @SuppressWarnings("unchecked")
+    private static String fieldTypeForSlug(Map<String, Object> definition, String slug) {
+        Object nodes = definition.get("nodes");
+        if (!(nodes instanceof List<?> nodeList)) {
+            return null;
+        }
+        for (Object n : nodeList) {
+            if (!(n instanceof Map<?, ?> nm)) {
+                continue;
+            }
+            Object els = nm.get("elements");
+            if (!(els instanceof List<?> elList)) {
+                continue;
+            }
+            for (Object e : elList) {
+                if (!(e instanceof Map<?, ?> em)) {
+                    continue;
+                }
+                if ("field".equals(em.get("kind")) && slug.equals(em.get("slug"))) {
+                    Object ft = em.get("field_type");
+                    if (ft instanceof String s && !s.isEmpty()) {
+                        return s;
+                    }
+                    Object t = em.get("type");
+                    return t instanceof String s2 ? s2 : null;
+                }
+            }
+        }
+        return null;
     }
 
     /** The party that owns {@code nodeKey} in the definition. */
