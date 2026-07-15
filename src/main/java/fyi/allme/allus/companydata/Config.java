@@ -42,6 +42,13 @@ public final class Config {
 
     private final String accountPrivateKey;    // optional — only for encrypt_payload webhooks
     private final String accountPassphrase;
+    // "Sign in with allme" idw role (#195). oauthPrivateKey + oauthKeyPassphrase are needed only to
+    // decrypt one_time claim values (config-only key handling).
+    private final String oauthClientId;
+    private final String oauthRedirectUri;
+    private final String oauthClientSecret;
+    private final String oauthPrivateKey;
+    private final String oauthKeyPassphrase;
     private final Map<String, String> webhooks; // webhook id -> HMAC secret
 
     // OPTIONAL — alternative webhook auth methods, mirroring the platform's
@@ -60,6 +67,8 @@ public final class Config {
                    String servicePrivateKey, String keyPassphrase,
                    String customerClientId, String customerClientSecret,
                    String accountPrivateKey, String accountPassphrase,
+                   String oauthClientId, String oauthRedirectUri, String oauthClientSecret,
+                   String oauthPrivateKey, String oauthKeyPassphrase,
                    Map<String, String> webhooks,
                    String webhookBearerToken, Map<String, String> webhookBasic,
                    Map<String, String> webhookHeader, boolean webhookAuthNone,
@@ -73,6 +82,11 @@ public final class Config {
         this.customerClientSecret = customerClientSecret;
         this.accountPrivateKey = accountPrivateKey;
         this.accountPassphrase = accountPassphrase;
+        this.oauthClientId = oauthClientId;
+        this.oauthRedirectUri = oauthRedirectUri;
+        this.oauthClientSecret = oauthClientSecret;
+        this.oauthPrivateKey = oauthPrivateKey;
+        this.oauthKeyPassphrase = oauthKeyPassphrase;
         this.webhooks = webhooks;
         this.webhookBearerToken = webhookBearerToken;
         this.webhookBasic = webhookBasic;
@@ -127,6 +141,28 @@ public final class Config {
         return doBuild(Map.of(), System::getenv, "customer");
     }
 
+    /** Load an IDW-role config (#195, "Sign in with allme") from a JSON file — requires the
+     *  oauth_client_id + oauth_redirect_uri. Env vars override file values. */
+    public static Config fromIdwFile(String path) {
+        Map<String, Object> data;
+        try {
+            String text = Files.readString(Path.of(path), StandardCharsets.UTF_8);
+            data = Json.parseObject(text);
+        } catch (NoSuchFileException exc) {
+            throw new ConfigException("config file not found: " + path, exc);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exc) {
+            throw new ConfigException("config file is not valid JSON: " + path + ": " + exc.getMessage(), exc);
+        } catch (IOException exc) {
+            throw new ConfigException("could not read config file: " + path + ": " + exc.getMessage(), exc);
+        }
+        return doBuild(data, System::getenv, "idw");
+    }
+
+    /** Build an IDW-role config entirely from {@code ALLUS_*} env vars. */
+    public static Config fromIdwEnv() {
+        return doBuild(Map.of(), System::getenv, "idw");
+    }
+
     /** Build a Config directly (used by tests + advanced embedding). */
     public static Builder builder() {
         return new Builder();
@@ -160,6 +196,11 @@ public final class Config {
         String customerClientSecret = pick(envOf(env, "ALLUS_CUSTOMER_CLIENT_SECRET"), data.get("customer_client_secret"));
         String accountPrivateKey = pick(envOf(env, "ALLUS_ACCOUNT_PRIVATE_KEY"), data.get("account_private_key"));
         String accountPassphrase = pick(envOf(env, "ALLUS_ACCOUNT_PASSPHRASE"), data.get("account_passphrase"));
+        String oauthClientId = pick(envOf(env, "ALLUS_OAUTH_CLIENT_ID"), data.get("oauth_client_id"));
+        String oauthRedirectUri = pick(envOf(env, "ALLUS_OAUTH_REDIRECT_URI"), data.get("oauth_redirect_uri"));
+        String oauthClientSecret = pick(envOf(env, "ALLUS_OAUTH_CLIENT_SECRET"), data.get("oauth_client_secret"));
+        String oauthPrivateKey = pick(envOf(env, "ALLUS_OAUTH_PRIVATE_KEY"), data.get("oauth_private_key"));
+        String oauthKeyPassphrase = pick(envOf(env, "ALLUS_OAUTH_KEY_PASSPHRASE"), data.get("oauth_key_passphrase"));
         String cacheDir = pick(envOf(env, "ALLUS_CACHE_DIR"), data.get("cache_dir"));
         String format = pick(envOf(env, "ALLUS_FORMAT"), data.get("format"));
 
@@ -247,7 +288,10 @@ public final class Config {
         // Required fields (fail fast).
         Map<String, String> required = new LinkedHashMap<>();
         required.put("api_url", apiUrl);
-        if ("customer".equals(role)) {
+        if ("idw".equals(role)) {
+            required.put("oauth_client_id", oauthClientId);
+            required.put("oauth_redirect_uri", oauthRedirectUri);
+        } else if ("customer".equals(role)) {
             required.put("customer_client_id", customerClientId);
             required.put("customer_client_secret", customerClientSecret);
             required.put("account_private_key", accountPrivateKey);
@@ -285,7 +329,9 @@ public final class Config {
 
         return new Config(apiUrl, clientId, clientSecret, servicePrivateKey, keyPassphrase,
             customerClientId, customerClientSecret,
-            accountPrivateKey, accountPassphrase, webhooks,
+            accountPrivateKey, accountPassphrase,
+            oauthClientId, oauthRedirectUri, oauthClientSecret, oauthPrivateKey, oauthKeyPassphrase,
+            webhooks,
             webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
             cacheDir, format);
     }
@@ -332,11 +378,34 @@ public final class Config {
         return customerClientSecret;
     }
 
+    /** #195 idw role: the idw_* app client id. */
+    public String oauthClientId() {
+        return oauthClientId;
+    }
+
+    public String oauthRedirectUri() {
+        return oauthRedirectUri;
+    }
+
+    public String oauthClientSecret() {
+        return oauthClientSecret;
+    }
+
+    public String oauthPrivateKey() {
+        return oauthPrivateKey;
+    }
+
+    public String oauthKeyPassphrase() {
+        return oauthKeyPassphrase;
+    }
+
     /** #168: an http-facing copy whose clientId/secret are the customer acct_* pair. */
     Config toCustomerHttpConfig() {
         return new Config(apiUrl, customerClientId, customerClientSecret, null, null,
             customerClientId, customerClientSecret,
-            accountPrivateKey, accountPassphrase, webhooks,
+            accountPrivateKey, accountPassphrase,
+            oauthClientId, oauthRedirectUri, oauthClientSecret, oauthPrivateKey, oauthKeyPassphrase,
+            webhooks,
             webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
             cacheDir, format);
     }

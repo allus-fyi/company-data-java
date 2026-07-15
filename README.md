@@ -820,3 +820,14 @@ buffer on restart — see [The changes pump](#the-changes-pump).
 `DocumentBuilder` (DOCTYPE disallowed, external entities + entity-reference
 expansion off, secure-processing on) — XXE-safe. The HMAC is always computed over
 the raw bytes, never the parsed tree.
+
+## Sign in with allme (OAuth, #195)
+
+```java
+OAuthClient oauth = OAuthClient.fromConfig("idw-config.json");
+String url = oauth.authorizeUrl("signin", new OAuthClient.AuthorizeOptions().state(state).codeChallenge(ch));
+// ...user approves; your redirect receives ?code=...
+OAuthClient.SignInResult res = oauth.completeSignIn(code, verifier); // res.user(), res.mode(), res.values()
+```
+
+Modes: `signin` | `one_time` (claim values decrypted for you) | `connect`. `pollResult(state, timeout, interval)` drives the detached mode.
