@@ -20,6 +20,7 @@ public record Value(
     Object value,
     boolean live,
     OffsetDateTime updatedAt,
+    boolean verified,
     Map<String, Object> raw
 ) {
     static Value fromApi(Map<String, Object> entry, String fieldType, ModelDeps deps) {
@@ -27,7 +28,16 @@ public record Value(
         Object updatedRaw = entry.containsKey("updatedAt") ? entry.get("updatedAt") : entry.get("updated_at");
         OffsetDateTime updatedAt = Parse.isoDateTime(updatedRaw);
         Object typed = deps.typedValue(entry, fieldType);
-        return new Value(typed, live, updatedAt, entry);
+        return new Value(typed, live, updatedAt, verifiedFrom(entry, typed), entry);
+    }
+
+    /** #311: recompute the verified flag from the just-decrypted plaintext (email String only). */
+    static boolean verifiedFrom(Map<String, Object> obj, Object plaintext) {
+        if (!(plaintext instanceof String pt)) return false;
+        String vhash = Parse.str(obj.get("verified_hash"));
+        String vsalt = Parse.str(obj.get("verified_salt"));
+        if (vhash == null || vhash.isEmpty() || vsalt == null || vsalt.isEmpty()) return false;
+        return Crypto.hashMatches(vsalt, vhash, pt);
     }
 
     /** The value as a String (for text/email/phone/url); throws if it isn't one. */

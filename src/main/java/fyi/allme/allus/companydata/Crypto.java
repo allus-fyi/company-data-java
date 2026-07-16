@@ -16,8 +16,10 @@ import javax.crypto.spec.OAEPParameterSpec;
 import javax.crypto.spec.PSource;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.io.StringReader;
 import java.security.KeyFactory;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
@@ -324,6 +326,24 @@ public final class Crypto {
             return Base64.getDecoder().decode(value);
         } catch (IllegalArgumentException exc) {
             throw new DecryptException("wrapper field '" + fieldName + "' is not valid base64", exc);
+        }
+    }
+
+    /**
+     * #311 verified fields: true iff sha256(salt ‖ plaintext) == expectedHash (hex). Consumers
+     * recompute this from the plaintext they just decrypted and trust the verified flag only on a match.
+     */
+    public static boolean hashMatches(String salt, String expectedHash, String plaintext) {
+        if (salt == null || salt.isEmpty() || expectedHash == null || expectedHash.isEmpty()) return false;
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest((salt + plaintext).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return MessageDigest.isEqual(
+                sb.toString().getBytes(StandardCharsets.UTF_8), expectedHash.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return false;
         }
     }
 }
