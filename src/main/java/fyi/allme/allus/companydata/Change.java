@@ -40,6 +40,7 @@ public record Change(
     String signedAt,      // set on a signature: ISO timestamp the signature was recorded
     String cancelEffectiveDate, // set on a cancelled document_status_changed: ISO date the cancellation takes effect
     String requestId, // set on connection_request_accepted | connection_request_rejected
+    String publicKeySha256, // #344: set on key_rotated — SHA-256 fingerprint of the person's NEW public key
     boolean verified, // #311: true iff a field_updated value is verified (hash matches the decrypted plaintext)
     OffsetDateTime at,
     Map<String, Object> raw
@@ -75,11 +76,15 @@ public record Change(
             || "connection_request_rejected".equals(event))
             ? Parse.str(obj.get("request_id")) : null;
 
+        // #344: key_rotated carries the fingerprint of the person's NEW public key (no slot/value).
+        String publicKeySha256 = "key_rotated".equals(event)
+            ? Parse.str(obj.get("public_key_sha256")) : null;
+
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), Parse.str(obj.get("customer_type")), slug, value, live,
             documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate, requestId,
-            Value.verifiedFrom(obj, value), Parse.isoDateTime(obj.get("at")), obj);
+            publicKeySha256, Value.verifiedFrom(obj, value), Parse.isoDateTime(obj.get("at")), obj);
     }
 
     /** Parse the {@code /changes} response → a list of typed Change events. */

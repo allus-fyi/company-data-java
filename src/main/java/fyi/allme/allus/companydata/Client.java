@@ -76,6 +76,29 @@ public final class Client {
     // Recipient RSA public keys (by share_code) — cached for per-person document
     // encryption. A public key is immutable + not a secret (fetched live, never configured).
     private final Map<String, java.security.interfaces.RSAPublicKey> pubkeyCache = new LinkedHashMap<>();
+    /**
+     * #344 review pass 2: {@code LinkedHashMap} is not thread-safe, and {@link #invalidatePublicKey}
+     * is documented as something a WEBHOOK consumer calls from its own thread — concurrently with an
+     * encryption that reads or populates this map. Every access goes through this monitor. The lock
+     * is never held across the HTTP fetch, or concurrent encryptions would serialise behind one
+     * round-trip. (The Go SDK's equivalent race is what the review caught; the same reasoning
+     * applies verbatim here.)
+     */
+    private final Object pubkeyLock = new Object();
+    /**
+     * #344 review pass 3: a per-key GENERATION counter, bumped by every invalidation.
+     *
+     * <p>Locking the map alone is not enough. The fetch path is check (locked) → release → HTTP →
+     * store (locked), so an {@code invalidatePublicKey} landing between the release and the store
+     * is silently undone: the pre-rotation key is written back AFTER the removal, the
+     * {@code key_rotated} event has already been consumed, and with no TTL the process encrypts to
+     * the dead key for the rest of its life — the exact symptom this issue exists to fix.
+     *
+     * <p>The fetch snapshots the generation before releasing the lock and stores only if it is
+     * still current; otherwise it discards its result and the next caller refetches. Invalidation
+     * therefore dominates every fetch that began before it.
+     */
+    private final Map<String, Long> pubkeyGen = new LinkedHashMap<>();
 
     // The service RSA public key (public half of the loaded private key), derived once.
     private java.security.interfaces.RSAPublicKey servicePublicKey;
@@ -344,7 +367,37 @@ public final class Client {
         return out;
     }
 
+    /**
+     * #344 — drop a person's cached RSA public key, by share code.
+     *
+     * <p>A public key is immutable, so caching one is safe until the person rotates it. Persons
+     * learn about a rotation from a silent push; a SERVICE receives no pushes at all, so without a
+     * signal a long-lived worker could keep encrypting documents to the rotated-away key for the
+     * whole process lifetime, with no recovery.
+     *
+     * <p>The changes feed calls this for you. Call it yourself when consuming changes over a
+     * <b>webhook</b> — the verifier is static and has no client instance, so it cannot reach this
+     * cache: on a {@code key_rotated} webhook call {@code client.invalidatePublicKey(change.shareCode())}.
+     */
+    public void invalidatePublicKey(String shareCode) {
+        synchronized (pubkeyLock) {
+            pubkeyCache.remove(shareCode);
+            // Any fetch already in flight must not write its stale result back.
+            pubkeyGen.merge(shareCode, 1L, Long::sum);
+        }
+    }
+
     private Change decryptChange(Map<String, Object> event) {
+        // #344: the feed is a service's only rotation signal. Deliberately eventual — nothing
+        // rejects a document encrypted to a stale key, so a window remains until this is drained.
+        // #344: the pull feed names it `event`; a raw webhook body names it `action` (and on
+        // document rows `action` carries signed|accepted|cancelled instead) — so match either key.
+        if ("key_rotated".equals(event.get("event")) || "key_rotated".equals(event.get("action"))) {
+            Object shareCode = event.get("share_code");
+            if (shareCode instanceof String s && !s.isEmpty()) {
+                invalidatePublicKey(s);
+            }
+        }
         return Change.fromApi(event, deps);
     }
 
@@ -411,7 +464,12 @@ public final class Client {
     /** Fetch + cache the recipient RSA public key by share_code ({@code GET /api/keys/{shareCode}}). */
     @SuppressWarnings("unchecked")
     private java.security.interfaces.RSAPublicKey recipientPublicKey(String shareCode) {
-        java.security.interfaces.RSAPublicKey cached = pubkeyCache.get(shareCode);
+        java.security.interfaces.RSAPublicKey cached;
+        long gen;
+        synchronized (pubkeyLock) {
+            cached = pubkeyCache.get(shareCode);
+            gen = pubkeyGen.getOrDefault(shareCode, 0L);
+        }
         if (cached != null) {
             return cached;
         }
@@ -421,7 +479,12 @@ public final class Client {
             throw new ApiException(0, "keys.not_found", "no public_key for share_code " + shareCode);
         }
         java.security.interfaces.RSAPublicKey key = Crypto.loadPublicKey(String.valueOf(spki));
-        pubkeyCache.put(shareCode, key);
+        synchronized (pubkeyLock) {
+            // Store ONLY if no invalidation happened while the request was in flight.
+            if (pubkeyGen.getOrDefault(shareCode, 0L) == gen) {
+                pubkeyCache.put(shareCode, key);
+            }
+        }
         return key;
     }
 

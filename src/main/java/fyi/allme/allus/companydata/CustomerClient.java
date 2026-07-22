@@ -37,6 +37,29 @@ public final class CustomerClient {
     private final RSAPrivateKey accountKey;
     private final ModelDeps deps;
     private final Map<String, RSAPublicKey> pubKeyCache = new LinkedHashMap<>();
+    /** #344 review pass 2: see {@code Client}'s pubkeyLock — same hazard, same remedy. */
+    private final Object pubKeyLock = new Object();
+    /**
+     * #344 review pass 3: a per-key GENERATION counter, bumped by every invalidation.
+     *
+     * <p>Locking the map alone is not enough. The fetch path is check (locked) → release → HTTP →
+     * store (locked), so an {@code invalidatePublicKey} landing between the release and the store
+     * is silently undone: the pre-rotation key is written back AFTER the removal, the
+     * {@code key_rotated} event has already been consumed, and with no TTL the process encrypts to
+     * the dead key for the rest of its life — the exact symptom this issue exists to fix.
+     *
+     * <p>The fetch snapshots the generation before releasing the lock and stores only if it is
+     * still current; otherwise it discards its result and the next caller refetches. Invalidation
+     * therefore dominates every fetch that began before it.
+     */
+    private final Map<String, Long> pubKeyGen = new LinkedHashMap<>();
+    /**
+     * #344 review pass 3: {@code serviceKeyCache} and {@code requestTypeCache} sit on the same
+     * concurrent encryption paths as {@code pubKeyCache}, so an unsynchronised {@code
+     * LinkedHashMap} corrupts under concurrent read+write. Neither has an invalidator, so neither
+     * needs a generation counter — but adding one later MUST bring a generation with it.
+     */
+    private final Object otherLock = new Object();
     private final Map<String, RSAPublicKey> serviceKeyCache = new LinkedHashMap<>();
     // "companyCode/serviceCode" → {request_field_id: field_type}, for typed-answer validation (#302).
     private final Map<String, Map<String, String>> requestTypeCache = new LinkedHashMap<>();
@@ -211,7 +234,31 @@ public final class CustomerClient {
         return out;
     }
 
+    /**
+     * #344 — drop a person's cached RSA public key, by user id. See {@code
+     * Client#invalidatePublicKey}; the changes feed calls this for you, webhook consumers must
+     * call it themselves.
+     */
+    public void invalidatePublicKey(String userId) {
+        synchronized (pubKeyLock) {
+            pubKeyCache.remove(userId);
+            // Any fetch already in flight must not write its stale result back.
+            pubKeyGen.merge(userId, 1L, Long::sum);
+        }
+    }
+
     private Change decryptChange(Map<String, Object> event) {
+        // #344: this cache also stores a negative (null) result, so without invalidation a person
+        // who had not generated keys yet would stay unresolvable for the process lifetime too.
+        // #344: the pull feed names it `event`; a raw webhook body names it `action` (and on
+        // document rows `action` carries signed|accepted|cancelled instead) — so match either key.
+        if ("key_rotated".equals(event.get("event")) || "key_rotated".equals(event.get("action"))) {
+            Object personId = event.get("person_user_id") != null
+                    ? event.get("person_user_id") : event.get("person_id");
+            if (personId instanceof String s && !s.isEmpty()) {
+                invalidatePublicKey(s);
+            }
+        }
         return Change.fromApi(event, deps);
     }
 
@@ -273,7 +320,10 @@ public final class CustomerClient {
      */
     private Map<String, String> requestFieldTypes(String companyCode, String serviceCode) {
         String key = companyCode + "/" + serviceCode;
-        Map<String, String> cached = requestTypeCache.get(key);
+        Map<String, String> cached;
+        synchronized (otherLock) {
+            cached = requestTypeCache.get(key);
+        }
         if (cached != null) {
             return cached;
         }
@@ -297,7 +347,9 @@ public final class CustomerClient {
         } catch (RuntimeException exc) {
             // best-effort — skip validation when the lookup is unavailable
         }
-        requestTypeCache.put(key, map);
+        synchronized (otherLock) {
+            requestTypeCache.put(key, map);
+        }
         return map;
     }
 
@@ -328,24 +380,45 @@ public final class CustomerClient {
 
     private RSAPublicKey serviceKey(String companyCode, String serviceCode) {
         String key = companyCode + "/" + serviceCode;
-        if (!serviceKeyCache.containsKey(key)) {
-            Object body = http.get(KEYS + "/" + companyCode + "/" + serviceCode);
-            String spki = (body instanceof Map<?, ?> m && m.get("public_key") != null) ? String.valueOf(m.get("public_key")) : null;
-            serviceKeyCache.put(key, (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null);
+        // containsKey, not get() != null: a null value is a CACHED NEGATIVE and must count as a
+        // hit. Lock only around the map accesses, never the HTTP call.
+        synchronized (otherLock) {
+            if (serviceKeyCache.containsKey(key)) {
+                return serviceKeyCache.get(key);
+            }
         }
-        return serviceKeyCache.get(key);
+        Object body = http.get(KEYS + "/" + companyCode + "/" + serviceCode);
+        String spki = (body instanceof Map<?, ?> m && m.get("public_key") != null) ? String.valueOf(m.get("public_key")) : null;
+        RSAPublicKey loaded = (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null;
+        synchronized (otherLock) {
+            serviceKeyCache.put(key, loaded);
+        }
+        return loaded;
     }
 
     private RSAPublicKey batchKey(String userId) {
-        if (!pubKeyCache.containsKey(userId)) {
-            Object body = http.post(KEYS + "/batch", Map.of("user_ids", List.of(userId)));
-            String spki = null;
-            if (body instanceof Map<?, ?> m && m.get("keys") instanceof Map<?, ?> keys && keys.get(userId) != null) {
-                spki = String.valueOf(keys.get(userId));
+        // containsKey, not get() != null: a null value is a CACHED NEGATIVE (person has no key yet)
+        // and must still count as a hit. Lock only around the map accesses, never the HTTP call.
+        long gen;
+        synchronized (pubKeyLock) {
+            if (pubKeyCache.containsKey(userId)) {
+                return pubKeyCache.get(userId);
             }
-            pubKeyCache.put(userId, (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null);
+            gen = pubKeyGen.getOrDefault(userId, 0L);
         }
-        return pubKeyCache.get(userId);
+        Object body = http.post(KEYS + "/batch", Map.of("user_ids", List.of(userId)));
+        String spki = null;
+        if (body instanceof Map<?, ?> m && m.get("keys") instanceof Map<?, ?> keys && keys.get(userId) != null) {
+            spki = String.valueOf(keys.get(userId));
+        }
+        RSAPublicKey key = (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null;
+        synchronized (pubKeyLock) {
+            // Store ONLY if no invalidation happened while the request was in flight.
+            if (pubKeyGen.getOrDefault(userId, 0L) == gen) {
+                pubKeyCache.put(userId, key);
+            }
+        }
+        return key;
     }
 
     private static Object parseJson(String text) {
