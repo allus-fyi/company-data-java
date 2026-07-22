@@ -98,7 +98,7 @@ A change-feed / webhook event. Returned by the pump (`processChanges`,
 
 ```java
 record Change(
-    String  id,            // the stable server change-row id — YOUR dedup key
+    String  id,            // the pull feed's server change-row id — your dedup key THERE only
     String  event,         // see the event table
     String  personId,
     String  slug,          // field_updated/field_deleted/consent_* only (else null)
@@ -121,6 +121,8 @@ record Change(
 
 `Change.id()` is captured before the server's drain-delete, so it survives a
 crash + replay unchanged — dedup on it.
+
+> **On the webhook path this id is NOT a dedup key.** A live webhook delivery has no change row behind it, so its id is minted for that single POST; a delivery replayed from the server-side backlog is rebuilt from a durable row and carries that row's id instead — the same id on every re-attempt of that row. The id is therefore sometimes stable across a duplicate and sometimes not, with no way for the receiver to tell, which is what makes it unusable as an idempotency key. Webhooks and the pull feed are alternative integrations; see `webhooks.md` for the webhook delivery contract and what to key on instead (change.id() is not it).
 
 ## `LogEntry`
 
