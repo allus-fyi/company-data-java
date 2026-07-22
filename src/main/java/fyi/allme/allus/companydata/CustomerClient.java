@@ -56,11 +56,18 @@ public final class CustomerClient {
     /**
      * #344 review pass 3: {@code serviceKeyCache} and {@code requestTypeCache} sit on the same
      * concurrent encryption paths as {@code pubKeyCache}, so an unsynchronised {@code
-     * LinkedHashMap} corrupts under concurrent read+write. Neither has an invalidator, so neither
-     * needs a generation counter — but adding one later MUST bring a generation with it.
+     * LinkedHashMap} corrupts under concurrent read+write. {@code requestTypeCache} has no
+     * invalidator, so it needs no generation counter — but adding one later MUST bring a
+     * generation with it.
+     *
+     * <p>#411 is that "later" for {@code serviceKeyCache}: it now HAS an invalidator ({@link
+     * #invalidateServiceKey}, driven by the {@code service_key_rotated} change), so it carries
+     * {@code serviceKeyGen} under {@code otherLock}, on exactly the same check → release → HTTP →
+     * store reasoning as {@code pubKeyGen} above.
      */
     private final Object otherLock = new Object();
     private final Map<String, RSAPublicKey> serviceKeyCache = new LinkedHashMap<>();
+    private final Map<String, Long> serviceKeyGen = new LinkedHashMap<>();
     // "companyCode/serviceCode" → {request_field_id: field_type}, for typed-answer validation (#302).
     private final Map<String, Map<String, String>> requestTypeCache = new LinkedHashMap<>();
     private Pump pump;
@@ -247,6 +254,23 @@ public final class CustomerClient {
         }
     }
 
+    /**
+     * #411 — drop a SERVICE's cached RSA public key, so the next answer or document encrypted to it
+     * refetches. The mirror of {@link #invalidatePublicKey} in the service→customer direction.
+     *
+     * <p>The changes feed calls this for you on a {@code service_key_rotated} event; webhook
+     * consumers must call it themselves with the body's {@code company_share_code} and {@code
+     * service_share_code} (the verifier is static and has no client instance).
+     */
+    public void invalidateServiceKey(String companyCode, String serviceCode) {
+        String key = companyCode + "/" + serviceCode;
+        synchronized (otherLock) {
+            serviceKeyCache.remove(key);
+            // Any fetch already in flight must not write its stale result back.
+            serviceKeyGen.merge(key, 1L, Long::sum);
+        }
+    }
+
     private Change decryptChange(Map<String, Object> event) {
         // #344: this cache also stores a negative (null) result, so without invalidation a person
         // who had not generated keys yet would stay unresolvable for the process lifetime too.
@@ -257,6 +281,15 @@ public final class CustomerClient {
                     ? event.get("person_user_id") : event.get("person_id");
             if (personId instanceof String s && !s.isEmpty()) {
                 invalidatePublicKey(s);
+            }
+        }
+        // #411: a service this customer connects to replaced its keypair — drop the cached copy so
+        // the next encryption refetches. Same either-key match as above.
+        if ("service_key_rotated".equals(event.get("event"))
+                || "service_key_rotated".equals(event.get("action"))) {
+            if (event.get("company_share_code") instanceof String company && !company.isEmpty()
+                    && event.get("service_share_code") instanceof String service && !service.isEmpty()) {
+                invalidateServiceKey(company, service);
             }
         }
         return Change.fromApi(event, deps);
@@ -382,16 +415,21 @@ public final class CustomerClient {
         String key = companyCode + "/" + serviceCode;
         // containsKey, not get() != null: a null value is a CACHED NEGATIVE and must count as a
         // hit. Lock only around the map accesses, never the HTTP call.
+        long gen;
         synchronized (otherLock) {
             if (serviceKeyCache.containsKey(key)) {
                 return serviceKeyCache.get(key);
             }
+            gen = serviceKeyGen.getOrDefault(key, 0L);
         }
         Object body = http.get(KEYS + "/" + companyCode + "/" + serviceCode);
         String spki = (body instanceof Map<?, ?> m && m.get("public_key") != null) ? String.valueOf(m.get("public_key")) : null;
         RSAPublicKey loaded = (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null;
         synchronized (otherLock) {
-            serviceKeyCache.put(key, loaded);
+            // #411: store ONLY if no invalidation happened while the request was in flight.
+            if (serviceKeyGen.getOrDefault(key, 0L) == gen) {
+                serviceKeyCache.put(key, loaded);
+            }
         }
         return loaded;
     }
