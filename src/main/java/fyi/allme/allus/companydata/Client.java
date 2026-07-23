@@ -63,6 +63,8 @@ public final class Client {
 
     private final Config config;
     private final Http http;
+    /** #436 2FA-by-allme — the relying-party challenge API, lazily built (see {@link #twoFactor()}). */
+    private TwoFactorClient twoFactor;
     private final Logger log;
     private final java.util.function.DoubleConsumer sleep;
     private final java.security.interfaces.RSAPrivateKey privateKey;
@@ -172,6 +174,14 @@ public final class Client {
     }
 
     // ── definitions ────────────────────────────────────────────────────────────
+
+    /** #436 2FA-by-allme — the relying-party challenge API ({@code twoFactor().challenge} / {@code .result}). */
+    public TwoFactorClient twoFactor() {
+        if (twoFactor == null) {
+            twoFactor = new TwoFactorClient(http);
+        }
+        return twoFactor;
+    }
 
     /**
      * The cached request-field DEFINITIONS — fetched once from

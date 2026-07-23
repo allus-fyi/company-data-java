@@ -63,7 +63,9 @@ public record Change(
         // document_status_changed carries a document_id + new status (+ a contract action; no slot/value).
         String documentId = Parse.str(obj.get("document_id"));
         boolean isDocStatus = "document_status_changed".equals(event);
-        String status = isDocStatus ? Parse.str(obj.get("status")) : null;
+        // #436: 2fa_challenge_completed carries the outcome in status (approved|denied|revoked); its
+        // challenge_id/completed_at stay in raw. The poll is the record (spec §3).
+        String status = (isDocStatus || "2fa_challenge_completed".equals(event)) ? Parse.str(obj.get("status")) : null;
         String action = isDocStatus ? Parse.str(obj.get("action")) : null;
         String note = isDocStatus ? Parse.str(obj.get("note")) : null;
         String method = isDocStatus ? Parse.str(obj.get("method")) : null;
