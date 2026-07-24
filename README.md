@@ -253,6 +253,48 @@ Fetch one connection by its connection id (`GET /api/company-data/connections/{i
 * **Returns:** one `Connection`. Note: this endpoint returns `{connection_id, user_id, values}` and **no** `display_name`/`connected_at`, so those identity fields are `null` here (the list endpoint carries them).
 * **Throws:** `AuthException`, `ApiException` (404 if unknown), `DecryptException`, `RateLimitException`.
 
+### `identity()`
+
+```java
+Identity identity()
+```
+
+#491 gap 3: this client's OWN identity, from `GET /api/company-data/whoami`. The
+COMPANY party of a `triggerFlowRun` binding must bind to `Identity.companyUserId()`
+(the person party's user_id comes from the connection), so without this the
+company-side binding was unconstructible through the SDK.
+
+* **Returns:** `Identity(companyUserId, serviceId)`.
+* **Throws:** `AuthException`, `ApiException`, `RateLimitException`.
+
+```java
+Identity me = client.identity();
+Map<String, String> bindings = Map.of(
+    "company", me.companyUserId(),
+    "person", connection.userId());
+client.triggerFlowRun(flowId, connection.id(), bindings);
+```
+
+### `flowRunAnswers(run)`
+
+```java
+Map<String, Object> flowRunAnswers(FlowRun run)
+```
+
+#491 gap 1: a completed run's DECRYPTED answers as `{slug: plaintext}`. Decrypts
+the company's service-key answer copies of an already-fetched run — the public
+accessor for a finished run's answers (fetch the run with `flowRun(runId)`
+first, then pass it here).
+
+* **Returns:** `Map<String, Object>` keyed by slug — only the rows whose `for_user_id` is the company's bound user_id are decryptable with the service key.
+* **Throws:** `AuthException`, `DecryptException`, `RateLimitException`.
+
+```java
+FlowRun run = client.flowRun(runId);
+Map<String, Object> answers = client.flowRunAnswers(run);
+System.out.println(answers.get("plan_tier"));
+```
+
 ### `logs(limit, offset)`
 
 ```java
@@ -539,6 +581,13 @@ List<Document> openForAlice =
 // Fetch one by id.
 Document doc = client.document(contract.id());
 
+// #491: download a FILE document's bytes (metadata methods don't include them).
+// A BROADCAST document is stored plaintext and comes back as raw bytes. A
+// PER-PERSON / private document is encrypted to the RECIPIENT's key, which the
+// company service key cannot read — that throws ApiException("documents.recipient_encrypted").
+// For the company's own copy of a generated flow contract, use flowRunDocument(runId) instead.
+byte[] pdf = client.documentFile(contract.id());
+
 // A per-person json document is an encrypted wrapper — .json() decrypts it
 // transparently with your service key (a broadcast json doc returns plaintext as-is).
 Object body = doc.json();        // throws DecryptException if it isn't a json doc
@@ -560,6 +609,29 @@ client.deleteDocument(doc.id());
 `Document` carries `id()`, `kind()`, `name()`, `description()`, `status()`,
 `payloadKind()`, `isPrivate()`, `value()`, `metadata()`, `createdAt()`,
 `updatedAt()`, plus `.json()` (json docs) and `.raw()`.
+
+### `flowRunDocument(runId)`
+
+```java
+byte[] flowRunDocument(String runId)
+```
+
+#491 gap 2: download the company's OWN copy of a completed flow run's generated
+contract — the PLAINTEXT file bytes. `GET /api/company-data/flow-runs/{runId}/document/file`
+serves the company-party copy encrypted to the SERVICE key (unlike
+`documentFile`'s recipient-targeted copy), so it decrypts with your service key
+like any other binary field.
+
+```java
+FlowRun run = client.flowRun(runId);
+if ("completed".equals(run.status())) {
+    byte[] contractPdf = client.flowRunDocument(runId);
+    Files.write(Path.of("/tmp/contract-" + runId + ".pdf"), contractPdf);
+}
+```
+
+* **Returns:** the plaintext file bytes.
+* **Throws:** `ApiException` (404 when the run has not generated a document yet), `AuthException`, `DecryptException`, `RateLimitException`.
 
 ### Reacting to status changes in the pump
 

@@ -1,5 +1,6 @@
 package fyi.allme.allus.companydata.internal;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -11,8 +12,29 @@ import java.util.Map;
  */
 public interface Transport {
 
-    /** A minimal HTTP response (status + body text + headers). */
-    record Response(int status, String body, Map<String, List<String>> headers) {
+    /**
+     * A minimal HTTP response (status + body + headers). The body is held as raw
+     * {@code bodyBytes} so a binary response (a broadcast document's PDF/image
+     * bytes — see {@code Client#documentFile}) survives the transport
+     * byte-identically; {@link #body()} decodes those bytes as UTF-8 for the
+     * JSON/XML/error paths that want text.
+     */
+    record Response(int status, byte[] bodyBytes, Map<String, List<String>> headers) {
+        /**
+         * Convenience constructor for the text paths (form/JSON/XML fakes) that
+         * already hold a {@code String}; the bytes are its UTF-8 encoding. Binary
+         * responses use the canonical {@code byte[]} constructor so no charset
+         * round-trip ever touches them.
+         */
+        public Response(int status, String body, Map<String, List<String>> headers) {
+            this(status, body == null ? null : body.getBytes(StandardCharsets.UTF_8), headers);
+        }
+
+        /** The body decoded as UTF-8 text — for JSON/XML/error parsing. */
+        public String body() {
+            return bodyBytes == null ? null : new String(bodyBytes, StandardCharsets.UTF_8);
+        }
+
         /** First value of a header (case-insensitive), or null. */
         public String header(String name) {
             for (Map.Entry<String, List<String>> e : headers.entrySet()) {

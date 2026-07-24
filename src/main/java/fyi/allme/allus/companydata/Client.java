@@ -684,6 +684,63 @@ public final class Client {
     }
 
     /**
+     * #491 gap 2: download a document's file BYTES. {@link #document} returns metadata only. This
+     * GETs {@code /documents/{id}/file} and branches on the document's storage mode (server
+     * contract):
+     * <ul>
+     *   <li>a BROADCAST (non-private) document is stored plaintext and served as RAW bytes →
+     *       returned as-is;</li>
+     *   <li>a PER-PERSON / private document is encrypted to the RECIPIENT's key and served as
+     *       {@code {"encrypted":true,"value":{"_enc":1,...}}} — the company CANNOT decrypt that with
+     *       its service key, so this fails clearly ({@link ApiException}
+     *       {@code documents.recipient_encrypted}) rather than attempting a doomed service-key
+     *       decrypt. For a generated flow contract's OWN copy the company uses
+     *       {@link #flowRunDocument} — that copy IS service-key-encrypted.</li>
+     * </ul>
+     */
+    public byte[] documentFile(String documentId) {
+        byte[] raw = http.getRaw(DOCUMENTS + "/" + documentId + "/file");
+        if (raw == null) {
+            raw = new byte[0];
+        }
+        // Detect the recipient-encrypted JSON envelope WITHOUT corrupting binary: decode a
+        // COPY to UTF-8 text only to attempt the JSON parse (the small ASCII envelope decodes
+        // exactly; arbitrary binary just fails the parse). The returned value is always the
+        // original `raw` bytes — a broadcast PDF/image is byte-identical, per sdk.html §12.1.
+        Object decoded;
+        try {
+            decoded = Json.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception exc) {
+            decoded = null; // not JSON at all (e.g. a binary PDF) → broadcast / plaintext bytes
+        }
+        if (decoded instanceof Map<?, ?> m) {
+            if (isTruthy(m.get("encrypted"))) {
+                throw new ApiException(
+                    0,
+                    "documents.recipient_encrypted",
+                    "This document is encrypted to its recipient and is not readable with the company "
+                        + "service key. For a generated flow contract, use flowRunDocument(runId) to "
+                        + "download the company copy.");
+            }
+        }
+        return raw; // broadcast / plaintext bytes, returned byte-identically
+    }
+
+    /** {@code decoded['encrypted'] ?? false} truthiness, matching the PHP reference's loose check. */
+    private static boolean isTruthy(Object value) {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        if (value instanceof Number n) {
+            return n.doubleValue() != 0;
+        }
+        if (value instanceof String s) {
+            return !s.isEmpty() && !"0".equals(s);
+        }
+        return value != null;
+    }
+
+    /**
      * Set a document's lifecycle status
      * ({@code offering|ready_to_sign|active|active_but_ending|ended}).
      */
@@ -784,6 +841,47 @@ public final class Client {
     /** Fetch one run by id → {@link FlowRun}. */
     public FlowRun flowRun(String runId) {
         return FlowRun.fromApi(http.get(FLOW_RUNS + "/" + runId));
+    }
+
+    /**
+     * #491 gap 1: a completed run's DECRYPTED answers as {@code {slug: plaintext}}. Decrypts the
+     * company's service-key answer copies of an already-fetched run — the public accessor for a
+     * finished run's answers, since the private {@code decryptRunAnswers} it wraps is otherwise
+     * reached only inside {@link #processFlowRun}, which returns an already-completed run untouched.
+     * (Java has no {@code FlowRun|String} union; fetch the run with {@link #flowRun} first, then
+     * pass it here.)
+     */
+    public Map<String, Object> flowRunAnswers(FlowRun run) {
+        return decryptRunAnswers(run);
+    }
+
+    /**
+     * #491 gap 2: download the company's OWN copy of a run's generated flow contract — the PLAINTEXT
+     * file bytes. GETs {@code /flow-runs/{runId}/document/file}, which serves the company-party copy
+     * encrypted to the SERVICE key (unlike {@link #documentFile}'s recipient-targeted copy), so the
+     * same {@link BinaryHandle} the slot-file download uses decrypts it → the
+     * {@code {"file":"data:…;base64,…"}} envelope → the file bytes. 404 ({@link ApiException})
+     * when the run has not generated a document yet.
+     */
+    public byte[] flowRunDocument(String runId) {
+        return BinaryHandle.lazy(FLOW_RUNS + "/" + runId + "/document/file", this::binaryFetch, this::decryptValue)
+            .bytes();
+    }
+
+    /**
+     * #491 gap 3: this client's OWN identity from {@code GET /api/company-data/whoami}. The COMPANY
+     * party of a {@link #triggerFlowRun} binding must bind to {@link Identity#companyUserId()} (the
+     * person party's user_id comes from the connection), so without this the company-side binding was
+     * unconstructible through the SDK.
+     */
+    public Identity identity() {
+        Object body = http.get(BASE + "/whoami");
+        Map<?, ?> m = (body instanceof Map<?, ?> map) ? map : Map.of();
+        Object companyUserId = m.get("company_user_id");
+        Object serviceId = m.get("service_id");
+        return new Identity(
+            companyUserId == null ? "" : String.valueOf(companyUserId),
+            serviceId == null ? "" : String.valueOf(serviceId));
     }
 
     /**
