@@ -4,6 +4,7 @@ import fyi.allme.allus.companydata.internal.Http;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.LongConsumer;
 
 /**
  * #436 2FA-by-allme — the relying-party challenge API (spec §3), on the SERVICE's data-client credentials
@@ -16,9 +17,17 @@ import java.util.Map;
 public final class TwoFactorClient {
 
     private final Http http;
+    // Injectable so waitForResult is unit-testable without real delays (matches OAuthClient).
+    private final LongConsumer sleep;
 
     TwoFactorClient(Http http) {
+        this(http, TwoFactorClient::sleepMillis);
+    }
+
+    /** Test/advanced seam: inject the sleeper (millis) used between waitForResult polls. */
+    TwoFactorClient(Http http, LongConsumer sleep) {
         this.http = http;
+        this.sleep = sleep;
     }
 
     /**
@@ -43,8 +52,44 @@ public final class TwoFactorClient {
         return TwoFactorResult.fromApi(asMap(body));
     }
 
+    /** Poll {@link #result} with the default budget (timeout 600s, interval 2s). */
+    public TwoFactorResult waitForResult(String challengeId) {
+        return waitForResult(challengeId, 600, 2);
+    }
+
+    /**
+     * Poll {@link #result} until the status is terminal (no longer {@code pending}) and return that
+     * first terminal {@link TwoFactorResult} (#481; mirrors the §12c {@code pollResult} precedent).
+     *
+     * <p>Because the first terminal read burns the challenge, this returns as soon as the status
+     * leaves {@code pending} — it never re-reads a consumed result. Throws {@link ApiException} if
+     * {@code timeoutSeconds} elapse while still pending; {@code intervalSeconds} is the gap between polls.
+     */
+    public TwoFactorResult waitForResult(String challengeId, long timeoutSeconds, long intervalSeconds) {
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000;
+        while (true) {
+            TwoFactorResult res = result(challengeId);
+            if (!"pending".equals(res.status())) {
+                return res;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw new ApiException(0, null,
+                    "2FA challenge " + challengeId + " not completed within " + timeoutSeconds + "s");
+            }
+            sleep.accept(intervalSeconds * 1000);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> asMap(Object body) {
         return body instanceof Map ? (Map<String, Object>) body : Map.of();
+    }
+
+    private static void sleepMillis(long ms) {
+        try {
+            Thread.sleep(Math.max(0, ms));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

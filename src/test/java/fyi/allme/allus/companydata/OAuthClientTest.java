@@ -188,4 +188,38 @@ class OAuthClientTest {
         ApiException ex = assertThrows(ApiException.class, () -> c.pollResult("DET1", 5, 0));
         assertEquals(410, ex.status());
     }
+
+    // ── #481: 2fa_enroll mode + detached enrollment poll delivery ──────────────
+
+    @Test
+    void authorizeUrlAcceptsEnrollMode() {
+        OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
+        Map<String, String> q = parseQuery(c.authorizeUrl("2fa_enroll",
+            new OAuthClient.AuthorizeOptions().responseMode("detached").state("EN1")));
+        assertEquals("2fa_enroll", q.get("mode"));
+        assertEquals("detached", q.get("response_mode"));
+    }
+
+    @Test
+    void pollResultPendingThenEnrolled() {
+        // #481: a detached 2fa_enroll delivers {enrolled: true, state}, NOT a code. pollResult must
+        // return on the `enrolled` sentinel — otherwise it consumes the one-shot result and times out.
+        FakeTransport t = new FakeTransport();
+        t.postResponses.add(FakeTransport.json(202, ""));
+        t.postResponses.add(FakeTransport.json(200, "{\"enrolled\":true,\"state\":\"EN1\"}"));
+        OAuthClient c = new OAuthClient(idwCfg(), t);
+        Map<String, Object> res = c.pollResult("EN1", 5, 0);
+        assertEquals(true, res.get("enrolled"));
+        assertEquals("EN1", res.get("state"));
+        assertEquals(2, t.posts.size()); // returned on first delivery, never polled past it
+    }
+
+    @Test
+    void pollResultStillReturnsOnCodeAfterEnrollChange() {
+        // Regression: the enroll addition must not break the sign-in `code` delivery.
+        FakeTransport t = new FakeTransport();
+        t.postResponses.add(FakeTransport.json(200, "{\"code\":\"AUTHCODE\",\"state\":\"DET1\"}"));
+        OAuthClient c = new OAuthClient(idwCfg(), t);
+        assertEquals("AUTHCODE", c.pollResult("DET1", 5, 0).get("code"));
+    }
 }

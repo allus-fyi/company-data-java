@@ -163,6 +163,27 @@ class HttpTest {
     }
 
     @Test
+    void pendingCap429SurfacesImmediatelyWithoutRetry() {
+        // #481: a twofa.pending_cap 429 can never be cleared by a retry — it must surface at once
+        // as ApiException, NOT go through the Retry-After backoff (which every other 429 gets).
+        FakeTransport t = new FakeTransport();
+        t.postResponses.add(FakeTransport.tokenOk());
+        t.getResponses.add(FakeTransport.json(429, "{\"error_key\":\"twofa.pending_cap\"}",
+            Map.of("Retry-After", List.of("2"))));
+        t.getResponses.add(FakeTransport.json(200, "{\"should\":\"not be reached\"}"));
+        List<Double> sleeps = new ArrayList<>();
+        Http c = client(t, sleeps);
+
+        ApiException exc = assertThrows(ApiException.class,
+            () -> c.get("/api/service-2fa/challenges"));
+        assertEquals(429, exc.status());
+        assertEquals("twofa.pending_cap", exc.errorKey());
+        assertFalse(exc instanceof RateLimitException); // not the retryable 429 path
+        assertTrue(sleeps.isEmpty());   // no backoff sleep
+        assertEquals(1, t.gets.size()); // no retry — the 200 was never consumed
+    }
+
+    @Test
     void rateLimitedDefaultBackoffWhenNoRetryAfter() {
         FakeTransport t = new FakeTransport();
         t.postResponses.add(FakeTransport.tokenOk());

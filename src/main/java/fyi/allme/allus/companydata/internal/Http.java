@@ -222,13 +222,19 @@ public final class Http {
             }
 
             if (status == 429) {
+                String[] err = extractError(resp);
+                // #481: a pending-cap 429 means the caller already holds the maximum concurrent
+                // 2FA challenges — a retry can never clear that, so surface it immediately as an
+                // ApiException instead of the blind Retry-After backoff every other 429 gets.
+                if ("twofa.pending_cap".equals(err[0])) {
+                    throw new ApiException(status, err[0], err[1]);
+                }
                 Double retryAfter = parseRetryAfter(resp);
                 if (retries429 < maxRetries429) {
                     retries429++;
                     sleep.accept(backoffDelay(retryAfter, retries429));
                     continue;
                 }
-                String[] err = extractError(resp);
                 throw new RateLimitException(retryAfter, err[0], err[1]);
             }
 

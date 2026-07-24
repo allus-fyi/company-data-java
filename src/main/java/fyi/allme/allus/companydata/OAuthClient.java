@@ -33,7 +33,7 @@ public final class OAuthClient {
 
     private static final Set<String> NON_CLAIMABLE = Set.of("photo", "document", "legal_document");
     private static final int MAX_CLAIMS = 15;
-    private static final Set<String> MODES = Set.of("signin", "one_time", "connect");
+    private static final Set<String> MODES = Set.of("signin", "one_time", "connect", "2fa_enroll");
     private static final Set<String> RESPONSE_MODES = Set.of("redirect", "detached");
 
     private final Config config;
@@ -100,10 +100,15 @@ public final class OAuthClient {
         public AuthorizeOptions redirectUri(String u) { this.redirectUri = u; return this; }
     }
 
-    /** Build the consent-screen URL — the "Sign in with allme" button target. */
+    /**
+     * Build the consent-screen URL — the "Sign in with allme" button target.
+     *
+     * <p>{@code mode} is one of {@code signin} | {@code one_time} | {@code connect} | {@code 2fa_enroll}.
+     */
     public String authorizeUrl(String mode, AuthorizeOptions opts) {
         if (!MODES.contains(mode)) {
-            throw new ConfigException("invalid mode '" + mode + "' (expected signin | one_time | connect)");
+            throw new ConfigException(
+                "invalid mode '" + mode + "' (expected signin | one_time | connect | 2fa_enroll)");
         }
         AuthorizeOptions o = opts != null ? opts : new AuthorizeOptions();
         String responseMode = o.responseMode != null ? o.responseMode : "redirect";
@@ -224,7 +229,13 @@ public final class OAuthClient {
         return out;
     }
 
-    /** Poll /oauth2/result for a detached sign-in (single-delivery). */
+    /**
+     * Poll /oauth2/result for a detached sign-in or enrollment (single-delivery).
+     *
+     * <p>A detached sign-in returns {@code {code, state}}; a detached {@code 2fa_enroll} returns
+     * {@code {enrolled: true, state}} (#481). Returns on the first delivered shape ({@code code} OR
+     * {@code enrolled}) and never polls past it, so a one-shot enrollment result is not consumed and lost.
+     */
     public Map<String, Object> pollResult(String state, long timeoutSeconds, long intervalSeconds) {
         if (timeoutSeconds <= 0) {
             timeoutSeconds = 600;
@@ -244,7 +255,10 @@ public final class OAuthClient {
             int status = res.status();
             if (status == 200) {
                 Map<String, Object> body = parseObject(res.body());
-                if (body.containsKey("code")) {
+                // #481: return on the first delivered terminal shape — a sign-in `code` OR a
+                // `2fa_enroll` `enrolled` sentinel ({enrolled: true, state}). Both are one-shot;
+                // returning here (rather than looping) keeps an enrollment result from being lost.
+                if (body.containsKey("code") || Boolean.TRUE.equals(body.get("enrolled"))) {
                     return body;
                 }
             } else if (status == 410) {
