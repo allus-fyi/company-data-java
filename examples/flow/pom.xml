@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    Flow example (run a contract flow) for the allus company-data Java SDK.
+
+    This is the example's OWN Maven project — deliberately SEPARATE from the SDK's
+    pom.xml (../../pom.xml) so it is NOT part of the published SDK artifact. It
+    depends on the SDK as a normal Maven coordinate (install it once with
+    `mvn -f ../.. install -DskipTests`, mirroring the PHP example's path repo).
+    Unlike the identity example it needs NO third-party OIDC library — every handler
+    goes through the SDK's intended top-level flow surface.
+
+    One command:  JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+  -->
+  <groupId>fyi.allme.allus</groupId>
+  <artifactId>flow-example</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>allus-flow-example</name>
+  <description>Runnable flow example (run a contract flow) for the allus company-data Java SDK. Its own Maven sub-project — NOT part of the published SDK package.</description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <exec.mainClass>fyi.allme.allus.flowexample.Main</exec.mainClass>
+  </properties>
+
+  <dependencies>
+    <!-- The SDK under demonstration (install once: `mvn -f ../.. install -DskipTests`). -->
+    <dependency>
+      <groupId>fyi.allme.allus</groupId>
+      <artifactId>company-data</artifactId>
+      <version>0.0.13</version>
+    </dependency>
+
+    <!-- JSON for the config files / run stash / wire envelopes (same version the SDK uses). -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.18.2</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <!-- The one-command launcher: `mvn -q compile exec:java` runs Main. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>${exec.mainClass}</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
