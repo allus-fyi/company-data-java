@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    The allus company-data Java SDK example test suite — ONE runnable project that serves all three
+    scenario families (identity sign-in / OIDC / 2FA, flow contract-runs, and company-data
+    connections / fields / changes / webhooks / documents) on one port.
+
+    This is the example's OWN Maven project — deliberately SEPARATE from the SDK's pom.xml (../pom.xml)
+    so it is NOT part of the published SDK artifact. It depends on the SDK as a normal Maven coordinate
+    (install it once with `mvn -f .. install -DskipTests`, mirroring the PHP example's path repo), plus
+    the standard Nimbus OIDC client (used only by the identity OIDC scenarios — the #314 compliance demo).
+
+    One command:  mvn -q compile exec:java   (JDK 21 + Maven on your PATH)
+  -->
+  <groupId>fyi.allme.allus</groupId>
+  <artifactId>example-test-suite</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>allus-example-test-suite</name>
+  <description>Runnable example test suite (identity / flow / company-data) for the allus company-data Java SDK. Its own Maven project — NOT part of the published SDK package.</description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <exec.mainClass>fyi.allme.allus.examples.Main</exec.mainClass>
+  </properties>
+
+  <dependencies>
+    <!-- The SDK under demonstration (install once: `mvn -f .. install -DskipTests`). -->
+    <dependency>
+      <groupId>fyi.allme.allus</groupId>
+      <artifactId>company-data</artifactId>
+      <version>0.0.13</version>
+    </dependency>
+
+    <!--
+      The identity OIDC scenarios (5/6) use a STANDARD, idiomatic Java OIDC client — Nimbus
+      oauth2-oidc-sdk — for discovery, PKCE, client_secret_post, and verified id_token validation. That
+      is the whole point of the OIDC demonstration (#314): a real OIDC library, not the allme SDK, drives
+      the login. It supports issuer override (any api_url) and client_secret_post. Declared here so it
+      never leaks into the published SDK package.
+    -->
+    <dependency>
+      <groupId>com.nimbusds</groupId>
+      <artifactId>oauth2-oidc-sdk</artifactId>
+      <version>11.38.2</version>
+    </dependency>
+
+    <!-- JSON for the config files / run stash / wire envelopes (same version the SDK uses). -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.18.2</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <!-- The one-command launcher: `mvn -q compile exec:java` runs Main. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>${exec.mainClass}</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

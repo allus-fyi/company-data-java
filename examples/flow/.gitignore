@@ -1,6 +1,0 @@
-# Transients — never committed (build output + runtime state + fetched bundle).
-/target/
-/.runtime/
-/.frontend/
-/.frontend.download.tar.gz
-.DS_Store
