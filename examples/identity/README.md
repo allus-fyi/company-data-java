@@ -19,21 +19,22 @@ locks and no burn-on-read).
 
 ---
 
-## Run it — one command
+## Run it
 
-**Prerequisite (once):** install the SDK into your local Maven repo so this
-example can resolve it — the Maven analogue of the PHP example's path repo:
+**Prerequisite (once):** clone this SDK's public repo and install the SDK into
+your local Maven repo so this example can resolve it:
 
 ```bash
-cd sdks/java
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q install -DskipTests
+git clone https://github.com/allus-fyi/company-data-java
+cd company-data-java
+mvn -q install -DskipTests
 ```
 
-Then, from this directory:
+Then run this example:
 
 ```bash
 cd examples/identity
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+mvn -q compile exec:java
 ```
 
 `exec:java` runs `Main`, which:
@@ -59,14 +60,14 @@ file — the backend writes it from your browser inputs; it is there to be read.
 **Port.** `8091` is the default, overridable with the `PORT` env var:
 
 ```bash
-PORT=8092 JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+PORT=8092 mvn -q compile exec:java
 ```
 
 The default is deliberately the **same across all six SDK examples** (one browser
 origin ⇒ your localStorage setup carries across SDKs) — the documented
 consequence is that only one example runs at a time.
 
-**Requirements:** JDK 21 (`JAVA_HOME=/opt/homebrew/opt/openjdk@21`), Maven, and
+**Requirements:** JDK 21 and Maven on your `PATH`, plus
 `curl` + `tar` on `PATH` (used to fetch/unpack the frontend bundle).
 
 ---
@@ -128,7 +129,7 @@ you create (adjust the port if you set `PORT`).
 | Path | What it is |
 |---|---|
 | `pom.xml` | This example's own Maven project — the SDK coordinate, the Nimbus OIDC library, Jackson. **Separate from the published SDK package.** |
-| `src/main/java/fyi/allme/allus/identityexample/Main.java` | The one-command launcher (steps above). |
+| `src/main/java/fyi/allme/allus/identityexample/Main.java` | The launcher (steps above). |
 | `…/Server.java` | The backend: contract endpoints, config files + run stash, SDK + OIDC wiring. |
 | `…/Runtime.java` | Cross-request state (config files, key PEMs, run stash), atomic writes, TTL sweep, clear. |
 | `…/Pkce.java` | PKCE verifier + S256 challenge for the SDK OAuth scenarios. |
@@ -157,7 +158,7 @@ updated in the same step; the startup guard refuses a mismatch loudly).
 
 | Symptom | Fix |
 |---|---|
-| **`Could not resolve … company-data:0.0.13`** | Install the SDK first: `cd ../.. && JAVA_HOME=… mvn -q install -DskipTests`. |
+| **`Could not resolve … company-data:0.0.13`** | Install the SDK first: `cd ../.. && mvn -q install -DskipTests`. |
 | **`port 8091 is busy`** | Another example (or process) holds the port — only one runs at a time. Stop it, or `PORT=<n> … mvn … exec:java`. |
 | **Stale / wrong frontend** after a pin bump | `rm -rf .frontend/` and run again to re-download the pinned release. |
 | **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from what this backend implements. Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |

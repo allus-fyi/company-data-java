@@ -15,7 +15,9 @@
     OAuth/OIDC library is needed — company-data has no consent leg (unlike the
     identity example); every scenario runs the SERVICE-role data Client.
 
-    One command:  JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+    Run it (JDK 21 + Maven on your PATH):
+      mvn -f ../.. install -DskipTests   # once — puts the SDK in your local Maven repo
+      mvn -q compile exec:java
   -->
   <groupId>fyi.allme.allus</groupId>
   <artifactId>company-data-example</artifactId>

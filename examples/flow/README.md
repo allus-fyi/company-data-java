@@ -18,20 +18,22 @@ The server is the JDK's built-in `com.sun.net.httpserver.HttpServer` on a
 
 ---
 
-## Run it — one command
+## Run it
 
-**Prerequisite (once):** install the SDK into your local Maven repo so this example
-can resolve it — the Maven analogue of the PHP example's path repo:
+**Prerequisite (once):** clone this SDK's public repo and install the SDK into
+your local Maven repo so this example can resolve it:
 
 ```bash
-cd ../.. && JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q install -DskipTests
+git clone https://github.com/allus-fyi/company-data-java
+cd company-data-java
+mvn -q install -DskipTests
 ```
 
-Then, from this directory:
+Then run this example:
 
 ```bash
-cd sdks/java/examples/flow
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+cd examples/flow
+mvn -q compile exec:java
 ```
 
 `exec:java` runs `Main`, which wipes `.runtime/` (fresh state every boot), fetches +
@@ -100,20 +102,16 @@ What you then observe:
 
 The scenario's advanced input (**API url**) defaults to the deployed platform
 (`https://api.allme.fyi`) — **no environment setup**. You register the data client,
-create the service, and import + publish the flow in the **allus portal**.
-
-> **Portal prerequisite / interim (2026-07-24).** `portal.allus.fyi` is **not
-> deployed yet**. Until it lands, the documented interim is to run the **local portal
-> UI against the cluster API**: set `VITE_API_URL=https://api.allme.fyi` in
-> `allus/.env` and start the portal locally (it proxies `/api` to that URL), so every
-> portal step still lands on the deployed platform the run executes against. A
-> physical phone with the allme app reaches the deployed platform naturally.
+create the service, and import + publish the flow in the **allus portal at
+[portal.allus.fyi](https://portal.allus.fyi)** (the scenario's setup checklist
+names the exact pages). A physical phone with the allme app reaches the deployed
+platform naturally.
 
 ---
 
 ## Secondary target — a local stack
 
-Running against a **local stack** is a documented secondary option. In the browser,
+Running against a **local stack** is an optional secondary target. In the browser,
 switch the advanced **API url** to `http://localhost:8070`; no file in **this**
 example changes. The phone must be able to reach the local API.
 
@@ -133,7 +131,7 @@ to a newer release: note the release **tag** and its `dist.tar.gz` checksum
 
 | Symptom | Fix |
 |---|---|
-| **`Could not resolve … company-data:…`** | Install the SDK first: `cd ../.. && JAVA_HOME=… mvn -q install -DskipTests`. |
+| **`Could not resolve … company-data:…`** | Install the SDK first: `cd ../.. && mvn -q install -DskipTests`. |
 | **`port 8091 is busy`** | Another example holds the port — only one runs at a time. Stop it, or `PORT=<n> … mvn … exec:java`. |
 | **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from this backend (flow = v2). Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |
 | **`frontend checksum MISMATCH`** | The downloaded `dist.tar.gz` doesn't match `frontend.lock`'s `sha256`. Fix the `sha256` or re-download. |
@@ -147,7 +145,7 @@ to a newer release: note the release **tag** and its `dist.tar.gz` checksum
 | Path | What it is |
 |---|---|
 | `pom.xml` | This example's Maven project — the SDK from the local repo, nothing else. |
-| `src/main/java/fyi/allme/allus/flowexample/Main.java` | The one-command launcher. |
+| `src/main/java/fyi/allme/allus/flowexample/Main.java` | The launcher. |
 | `…/Server.java` | The `flow:run` handler (contract endpoints). |
 | `…/Runtime.java` | Config files + run stash under `.runtime/` (wiped every boot). |
 | `…/Json.java` | Minimal JSON read/write helper. |

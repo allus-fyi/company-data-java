@@ -22,21 +22,22 @@ locks and no burn-on-read).
 
 ---
 
-## Run it — one command
+## Run it
 
-**Prerequisite (once):** install the SDK into your local Maven repo so this
-example can resolve it — the Maven analogue of the PHP example's path repo:
+**Prerequisite (once):** clone this SDK's public repo and install the SDK into
+your local Maven repo so this example can resolve it:
 
 ```bash
-cd sdks/java
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q install -DskipTests
+git clone https://github.com/allus-fyi/company-data-java
+cd company-data-java
+mvn -q install -DskipTests
 ```
 
-Then, from this directory:
+Then run this example:
 
 ```bash
 cd examples/company-data
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+mvn -q compile exec:java
 ```
 
 `exec:java` runs `Main`, which:
@@ -62,14 +63,14 @@ your browser inputs; it is there to be read.
 **Port.** `8091` is the default, overridable with the `PORT` env var:
 
 ```bash
-PORT=8092 JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+PORT=8092 mvn -q compile exec:java
 ```
 
 The default is deliberately the **same across all six SDK examples** (one browser
 origin ⇒ your localStorage setup carries across SDKs) — the documented
 consequence is that only one example runs at a time.
 
-**Requirements:** JDK 21 (`JAVA_HOME=/opt/homebrew/opt/openjdk@21`), Maven, and
+**Requirements:** JDK 21 and Maven on your `PATH`, plus
 `curl` + `tar` on `PATH` (used to fetch/unpack the frontend bundle).
 
 ---
@@ -127,10 +128,27 @@ the exact portal pages and any person-account prerequisites. The webhook
 scenario's `webhookId` + secret and the documents scenario's target person
 `share_code` are entered in their setup panels.
 
-The `companydata:webhook` scenario's public route is `POST /webhook` on this same
-port. Real platform deliveries reach it only when this backend is publicly
-addressable (a tunnel) — the **change-feed fallback is the always-works default**,
-so the scenario works locally without a tunnel.
+The `companydata:webhook` scenario is **setup-first**: register a webhook on your
+service in the portal, then paste its **webhook id** and one-time **HMAC secret**
+into the scenario before starting it — **the run refuses to start without them**
+(`Server.java` answers `409 not_configured`). Set `encrypt_payload` OFF; this
+example holds no account private key.
+
+Once it is started it works **locally with no tunnel**: the **change-feed fallback
+is the always-works default**, so events show up whether or not the platform can
+reach you directly.
+
+**Optional / advanced — real inbound delivery.** The scenario also exposes a
+public route, `POST /webhook`, on this same port. Real platform webhook deliveries
+reach it only when this backend is publicly addressable, e.g. via a tunnel:
+
+```bash
+cloudflared tunnel --url http://localhost:8091
+```
+
+Register the tunnel URL (plus `/webhook`) as the webhook's target in the portal.
+This is entirely optional — skip it and the change-feed fallback still surfaces
+every event.
 
 ---
 
@@ -139,7 +157,7 @@ so the scenario works locally without a tunnel.
 | Path | What it is |
 |---|---|
 | `pom.xml` | This example's own Maven project — the SDK coordinate + Jackson. **Separate from the published SDK package.** |
-| `src/main/java/fyi/allme/allus/companydataexample/Main.java` | The one-command launcher (steps above). |
+| `src/main/java/fyi/allme/allus/companydataexample/Main.java` | The launcher (steps above). |
 | `…/Server.java` | The backend: contract endpoints, config files + run stash, the five SDK handlers + the public webhook receiver. |
 | `…/Runtime.java` | Cross-request state (config files, key PEMs, run stash, webhook route, pump cache), atomic writes, TTL sweep, clear. |
 | `…/Json.java` | Tiny Jackson JSON helper. |
@@ -167,7 +185,7 @@ updated in the same step; the startup guard refuses a mismatch loudly).
 
 | Symptom | Fix |
 |---|---|
-| **`Could not resolve … company-data:0.0.13`** | Install the SDK first: `cd ../.. && JAVA_HOME=… mvn -q install -DskipTests`. |
+| **`Could not resolve … company-data:0.0.13`** | Install the SDK first: `cd ../.. && mvn -q install -DskipTests`. |
 | **`port 8091 is busy`** | Another example (or process) holds the port — only one runs at a time. Stop it, or `PORT=<n> … mvn … exec:java`. |
 | **Stale / wrong frontend** after a pin bump | `rm -rf .frontend/` and run again to re-download the pinned release. |
 | **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from what this backend implements. Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |

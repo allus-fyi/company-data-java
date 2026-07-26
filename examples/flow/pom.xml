@@ -14,7 +14,9 @@
     Unlike the identity example it needs NO third-party OIDC library — every handler
     goes through the SDK's intended top-level flow surface.
 
-    One command:  JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+    Run it (JDK 21 + Maven on your PATH):
+      mvn -f ../.. install -DskipTests   # once — puts the SDK in your local Maven repo
+      mvn -q compile exec:java
   -->
   <groupId>fyi.allme.allus</groupId>
   <artifactId>flow-example</artifactId>

@@ -13,7 +13,9 @@
     `mvn -f ../.. install -DskipTests`, mirroring the PHP example's path repo), plus
     the standard Nimbus OIDC client for scenarios 5/6 (the #314 compliance demo).
 
-    One command:  JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java
+    Run it (JDK 21 + Maven on your PATH):
+      mvn -f ../.. install -DskipTests   # once — puts the SDK in your local Maven repo
+      mvn -q compile exec:java
   -->
   <groupId>fyi.allme.allus</groupId>
   <artifactId>identity-example</artifactId>

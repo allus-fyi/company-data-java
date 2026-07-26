@@ -19,7 +19,7 @@ import java.util.stream.Stream;
 /**
  * One-command launcher for the flow example (contract §"Contract versioning" + §"Backend state").
  *
- * <p>Run it with: {@code JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn -q compile exec:java}
+ * <p>Run it with: {@code mvn -q compile exec:java} (JDK 21 + Maven on your PATH)
  *
  * <p>Steps:
  * <ol>
