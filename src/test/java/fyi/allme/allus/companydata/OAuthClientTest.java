@@ -93,19 +93,47 @@ class OAuthClientTest {
     @SuppressWarnings("unchecked")
     void authorizeUrlClaimValidation() throws Exception {
         OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
+        // #498: every claim carries a mandatory `name` — the identity everything downstream is keyed by.
         List<OAuthClient.Claim> claims = List.of(
-            new OAuthClient.Claim("email", "email_personal", false, null),
-            new OAuthClient.Claim("photo"),
-            new OAuthClient.Claim("phone", null, true, null),
-            new OAuthClient.Claim(""));
+            new OAuthClient.Claim("email", "email", "email_personal", false, false, null),
+            new OAuthClient.Claim("avatar", "photo"),
+            new OAuthClient.Claim("phone", "phone", null, true, false, null),
+            new OAuthClient.Claim("nothing", ""));
         Map<String, String> q = parseQuery(c.authorizeUrl("one_time",
             new OAuthClient.AuthorizeOptions().claims(claims)));
         List<Object> parsed = Json.parseArray(q.get("claims"));
         assertEquals(2, parsed.size());
+        assertEquals("email", ((Map<String, Object>) parsed.get(0)).get("name"));
         assertEquals("email", ((Map<String, Object>) parsed.get(0)).get("type"));
         assertEquals("email_personal", ((Map<String, Object>) parsed.get(0)).get("suggest"));
+        assertEquals("phone", ((Map<String, Object>) parsed.get(1)).get("name"));
         assertEquals("phone", ((Map<String, Object>) parsed.get(1)).get("type"));
         assertEquals(Boolean.TRUE, ((Map<String, Object>) parsed.get(1)).get("required"));
+    }
+
+    /** #498 §2: a nameless claim, and two sharing a name, are refused at the call that made them. */
+    @Test
+    void authorizeUrlClaimNameRequired() {
+        OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
+        assertThrows(ConfigException.class, () -> c.authorizeUrl("one_time",
+            new OAuthClient.AuthorizeOptions().claims(List.of(new OAuthClient.Claim(null, "email")))));
+        assertThrows(ConfigException.class, () -> c.authorizeUrl("one_time",
+            new OAuthClient.AuthorizeOptions().claims(List.of(
+                new OAuthClient.Claim("email", "email"),
+                new OAuthClient.Claim("email", "text")))));
+    }
+
+    /** #498 §3: `verified` travels on the wire, so an RP can demand a #311-attested answer. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void authorizeUrlClaimVerified() throws Exception {
+        OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
+        Map<String, String> q = parseQuery(c.authorizeUrl("signin",
+            new OAuthClient.AuthorizeOptions().claims(List.of(
+                new OAuthClient.Claim("email", "email", null, false, true, null)))));
+        List<Object> parsed = Json.parseArray(q.get("claims"));
+        assertEquals(1, parsed.size());
+        assertEquals(Boolean.TRUE, ((Map<String, Object>) parsed.get(0)).get("verified"));
     }
 
     @Test
@@ -113,7 +141,7 @@ class OAuthClientTest {
         OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
         List<OAuthClient.Claim> claims = new ArrayList<>();
         for (int i = 0; i < 30; i++) {
-            claims.add(new OAuthClient.Claim("text"));
+            claims.add(new OAuthClient.Claim("c" + i, "text"));
         }
         Map<String, String> q = parseQuery(c.authorizeUrl("one_time",
             new OAuthClient.AuthorizeOptions().claims(claims)));
@@ -131,14 +159,17 @@ class OAuthClientTest {
         FakeTransport t = new FakeTransport();
         t.postResponses.add(FakeTransport.json(200, "{\"access_token\":\"AT\",\"mode\":\"signin\"}"));
         t.getResponses.add(FakeTransport.json(200,
-            "{\"sub\":\"u1\",\"share_code\":\"AB12CD\",\"display_name\":\"Alice\",\"mode\":\"signin\",\"two_factor\":false}"));
+            "{\"sub\":\"AB12CD\",\"share_code\":\"AB12CD\",\"mode\":\"signin\",\"two_factor\":false}"));
         OAuthClient c = new OAuthClient(idwCfg(), t);
         Map<String, Object> tok = c.exchangeCode("CODE", "V");
         assertEquals("AT", tok.get("access_token"));
         assertEquals("authorization_code", t.posts.get(0).get("grant_type"));
         assertEquals("V", t.posts.get(0).get("code_verifier"));
         Map<String, Object> info = c.userinfo("AT");
-        assertEquals("Alice", info.get("display_name"));
+        // #498 §5: `sub` IS the share code (byte-identical to the id_token's); display_name is gone.
+        assertEquals("AB12CD", info.get("sub"));
+        assertEquals(info.get("share_code"), info.get("sub"));
+        assertFalse(info.containsKey("display_name"));
     }
 
     @Test
@@ -150,8 +181,8 @@ class OAuthClientTest {
         Map<String, Object> text = (Map<String, Object>) vec.get("text");
 
         Map<String, Object> uinfo = new LinkedHashMap<>();
-        uinfo.put("sub", "u1");
-        uinfo.put("display_name", "Alice");
+        uinfo.put("sub", "AB12CD");
+        uinfo.put("share_code", "AB12CD");
         uinfo.put("mode", "one_time");
         uinfo.put("two_factor", true);
         uinfo.put("values", Map.of("email_personal", text.get("wrapper")));
@@ -164,8 +195,10 @@ class OAuthClientTest {
         OAuthClient.SignInResult res = c.completeSignIn("CODE", "V");
         assertEquals("one_time", res.mode());
         assertTrue(res.twoFactor());
-        assertEquals("Alice", res.user().get("display_name"));
+        assertEquals("AB12CD", res.user().get("sub"));
         assertEquals(text.get("plaintext"), res.values().get("email_personal"));
+        // #498 §3.1a: no `values_attestation` on the wire → "not attested", never "wrong".
+        assertTrue(res.attestations().isEmpty());
     }
 
     @Test

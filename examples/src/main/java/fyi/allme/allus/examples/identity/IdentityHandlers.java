@@ -568,10 +568,15 @@ public final class IdentityHandlers {
         return List.of("email", "phone"); // a small default claim set
     }
 
+    /**
+     * #498: a claim carries a mandatory, unique {@code name} — the key {@code values} and
+     * {@code attestations} come back under. The demo's config lists claim TYPES, so the type doubles
+     * as the name here; a real integration usually names them for its own domain ("billing_email").
+     */
     private static List<OAuthClient.Claim> claimObjects(List<String> types) {
         List<OAuthClient.Claim> out = new ArrayList<>();
         for (String t : types) {
-            out.add(new OAuthClient.Claim(t));
+            out.add(new OAuthClient.Claim(t, t));
         }
         return out;
     }

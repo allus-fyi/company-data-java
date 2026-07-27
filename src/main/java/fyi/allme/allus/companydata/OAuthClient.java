@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.security.interfaces.RSAPrivateKey;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -73,16 +74,66 @@ public final class OAuthClient {
         return new OAuthClient(Config.fromIdwEnv());
     }
 
-    /** A one_time claim the RP asks for: a field TYPE + an advisory suggestion. */
-    public record Claim(String type, String suggest, boolean required, String label) {
-        public Claim(String type) {
-            this(type, null, false, null);
+    /**
+     * A claim the relying party asks for — a REQUEST FIELD (#498).
+     *
+     * <p>You describe what you need: a {@code name} (the claim's identity on the wire), a field
+     * {@code type}, an advisory {@code suggest}ion, whether it is {@code required}, and whether only
+     * a #311-{@code verified} answer will do. You never name one of the person's fields — THEY decide
+     * which of theirs answers it.
+     *
+     * <p>{@code name} is MANDATORY and must be unique within one request: everything downstream is
+     * keyed by it (the stored mapping, the consent outcome, and the {@code values}/
+     * {@code attestations} maps {@link #completeSignIn} returns). Two claims sharing a name are
+     * rejected rather than silently coalesced.
+     *
+     * <p>{@code verified} is accepted only where it can be honoured (#498 §3.1b): on the OIDC flow,
+     * and only for a type #311 can attest (v1: {@code email}). Sending it on a {@code one_time}
+     * request is refused with {@code invalid_request} — that leg carries no source row id, so the
+     * server could neither enforce the requirement nor attest it.
+     */
+    public record Claim(String name, String type, String suggest, boolean required,
+                        boolean verified, String label) {
+        public Claim(String name, String type) {
+            this(name, type, null, false, false, null);
         }
     }
 
-    /** The decrypted conclusion of {@link #completeSignIn}. */
+    /**
+     * Proof that a delivered value is the #311-verified one (#498 §3.1a).
+     *
+     * <p>Present only for a {@code verified} claim under ENCRYPTED delivery. The server builds and
+     * seals it against your app key — a client-supplied attestation is never accepted — so it attests
+     * the server's own record of the row the person chose, which is what makes it evidence.
+     *
+     * <p>{@code verified} is computed BY THIS SDK, in constant time, over the plaintext it just
+     * decrypted; it is never passed through from the server. <b>A {@code verified == false} entry
+     * means MISMATCH and you MUST reject the value.</b> A claim ABSENT from {@code attestations()}
+     * means "not attested" — never "wrong" — and must be treated as unverified.
+     *
+     * <p>{@code verifiedAt} carries the snapshot caveat: it attests the value as verified AT THAT
+     * MOMENT, not verified today. A field loses its verification whenever the person re-saves it.
+     *
+     * @param hash lowercase hex
+     * @param salt lowercase hex
+     */
+    public record Attestation(boolean verified, String hash, String salt, String verifiedAt) {
+    }
+
+    /**
+     * The decrypted conclusion of {@link #completeSignIn}.
+     *
+     * <p>#498 §5: {@code user.get("sub")} IS the person's SHARE CODE and is byte-identical to the
+     * id_token's {@code sub}; {@code share_code} is retained beside it and now simply equals it.
+     * {@code display_name} is GONE — it is a consented {@code name} claim now, or nothing: ask for
+     * {@code new Claim("name", "text")} and read {@code values().get("name")}.
+     *
+     * <p>#498 §3.1a: {@code attestations} is an ADDITIVE sibling map keyed by the SAME claim name as
+     * {@code values}, present only for a {@code verified} claim under ENCRYPTED delivery. An
+     * integration that never reads it behaves exactly as before.
+     */
     public record SignInResult(Map<String, String> user, String mode, boolean twoFactor,
-                               Map<String, String> values) {
+                               Map<String, String> values, Map<String, Attestation> attestations) {
     }
 
     /** Optional parameters for {@link #authorizeUrl}. */
@@ -139,17 +190,31 @@ public final class OAuthClient {
         if (claims == null) {
             return out;
         }
+        Set<String> seen = new LinkedHashSet<>();
         for (Claim c : claims) {
             if (c.type() == null || c.type().isEmpty() || NON_CLAIMABLE.contains(c.type())) {
                 continue;
             }
+            // #498 §2: `name` is the claim's identity and it is mandatory. Refused HERE rather than
+            // left to the API, so the integration error surfaces at the call that made it.
+            String name = c.name() == null ? "" : c.name().trim();
+            if (name.isEmpty()) {
+                throw new ConfigException("every claim must carry a `name` (#498)");
+            }
+            if (!seen.add(name)) {
+                throw new ConfigException("duplicate claim name '" + name + "' (#498)");
+            }
             Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("name", name);
             entry.put("type", c.type());
             if (c.suggest() != null && !c.suggest().isEmpty()) {
                 entry.put("suggest", c.suggest());
             }
             if (c.required()) {
                 entry.put("required", true);
+            }
+            if (c.verified()) {
+                entry.put("verified", true);
             }
             if (c.label() != null && !c.label().isEmpty()) {
                 entry.put("label", c.label());
@@ -199,14 +264,67 @@ public final class OAuthClient {
         Map<String, String> user = new LinkedHashMap<>();
         user.put("sub", str(info.get("sub")));
         user.put("share_code", str(info.get("share_code")));
-        user.put("display_name", str(info.get("display_name")));
         String mode = info.get("mode") instanceof String m ? m : str(token.get("mode"));
         boolean twoFactor = Boolean.TRUE.equals(info.get("two_factor"));
         Map<String, String> values = new LinkedHashMap<>();
+        Map<String, Attestation> attestations = new LinkedHashMap<>();
         if (info.get("values") instanceof Map<?, ?> raw && !raw.isEmpty()) {
             values = decryptValues(raw);
+            if (info.get("values_attestation") instanceof Map<?, ?> rawAttest && !rawAttest.isEmpty()) {
+                attestations = decryptAttestations(rawAttest, values);
+            }
         }
-        return new SignInResult(user, mode, twoFactor, values);
+        return new SignInResult(user, mode, twoFactor, values, attestations);
+    }
+
+    /**
+     * #498 §3.1a — open the app-key-sealed attestations and attest each value ourselves.
+     *
+     * <p>A SECOND decrypt per verified claim: {@code values} is byte-identical to before, but each
+     * attestation is its own {@code {"_enc":1,...}} object. A passthrough accessor handing back an
+     * undecrypted blob would not be an implementation of this.
+     *
+     * <p>An attestation that cannot be opened or parsed is DROPPED, not surfaced as
+     * {@code verified == false} — absence means "not attested" and a mismatch means "reject the
+     * value", and conflating the two would turn a key or transport problem into an accusation that
+     * the data was tampered with.
+     */
+    private Map<String, Attestation> decryptAttestations(Map<?, ?> raw, Map<String, String> values) {
+        byte[] pem;
+        try {
+            pem = Files.readAllBytes(Path.of(config.oauthPrivateKey()));
+        } catch (IOException exc) {
+            return Map.of();
+        }
+        RSAPrivateKey key = Crypto.loadPrivateKey(pem, config.oauthKeyPassphrase());
+        Map<String, Attestation> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            String slug = String.valueOf(e.getKey());
+            String plaintext = values.get(slug);
+            if (plaintext == null) {
+                continue;
+            }
+            Map<String, Object> obj;
+            try {
+                obj = Json.parseObject(Crypto.decrypt(Wrapper.of(e.getValue()), key));
+            } catch (Exception exc) {
+                continue;
+            }
+            String hash = str(obj.get("hash"));
+            String salt = str(obj.get("salt"));
+            if (hash == null || hash.isEmpty() || salt == null || salt.isEmpty()) {
+                continue;
+            }
+            String verifiedAt = str(obj.get("verified_at"));
+            out.put(slug, new Attestation(
+                // Recomputed here, constant-time, over the plaintext just decrypted — never trusted
+                // from the server. false = the delivered value is NOT the verified one; reject it.
+                Crypto.hashMatches(salt, hash, plaintext),
+                hash,
+                salt,
+                verifiedAt == null ? "" : verifiedAt));
+        }
+        return out;
     }
 
     private Map<String, String> decryptValues(Map<?, ?> raw) {
