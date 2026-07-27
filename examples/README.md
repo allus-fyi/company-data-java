@@ -218,7 +218,7 @@ runtime, plumbing) lives one package up and is shared by all three families.
 ## Bumping the frontend pin
 
 The frontend ships as a checksummed release asset; the single pin lives in
-`frontend.lock` (`{"tag":"v0.6.0","sha256":"<sha256 of dist.tar.gz>"}`). To move
+`frontend.lock` (`{"tag":"v0.6.1","sha256":"<sha256 of dist.tar.gz>"}`). To move
 to a newer release: set `tag` + `sha256` from the release's
 `shasum -a 256 dist.tar.gz`, `rm -rf .frontend/`, and run again — it downloads the
 new tag, verifies the checksum, and checks the bundle's `contract.json` version
