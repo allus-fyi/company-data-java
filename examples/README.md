@@ -25,7 +25,7 @@ locks and no burn-on-read).
 
 ---
 
-## Run it — one command
+## Run it
 
 **Prerequisites:** **JDK 21** and **Maven** on your `PATH`, plus `curl` + `tar`
 (used to fetch and unpack the frontend bundle).
@@ -198,7 +198,7 @@ you target.
 | Path | What it is |
 |---|---|
 | `pom.xml` | This example's own Maven project — the SDK coordinate, the Nimbus OIDC library, Jackson. Not separately published, but its source ships **inside** the SDK jar at `examples/` (#493); its dependencies never become the SDK's. |
-| `src/main/java/fyi/allme/allus/examples/Main.java` | The one-command launcher (steps above). |
+| `src/main/java/fyi/allme/allus/examples/Main.java` | The launcher (steps above). |
 | `…/examples/Server.java` | The single router: contract endpoints, `/api/meta` aggregation, static bundle, dispatch to a family by scenario id. |
 | `…/examples/Runtime.java` | Shared cross-request state (config files, key PEMs, run stash, webhook route, pump cache), atomic writes, TTL sweep, clear. |
 | `…/examples/Http.java` · `…/examples/Util.java` · `…/examples/Json.java` | Shared HTTP plumbing, value/envelope helpers, and the tiny Jackson JSON helper. |
