@@ -10,7 +10,8 @@
     connections / fields / changes / webhooks / documents) on one port.
 
     This is the example's OWN Maven project — deliberately SEPARATE from the SDK's pom.xml (../pom.xml)
-    so it is NOT part of the published SDK artifact. It depends on the SDK as a normal Maven coordinate
+    so it is not a separately published artifact — though since #493 its SOURCE is carried
+    inside the SDK jar (at examples/), so an installing developer does get it. It depends on the SDK as a normal Maven coordinate
     (install it once with `mvn -f .. install -DskipTests`, mirroring the PHP example's path repo), plus
     the standard Nimbus OIDC client (used only by the identity OIDC scenarios — the #314 compliance demo).
 
@@ -22,7 +23,7 @@
   <packaging>jar</packaging>
 
   <name>allus-example-test-suite</name>
-  <description>Runnable example test suite (identity / flow / company-data) for the allus company-data Java SDK. Its own Maven project — NOT part of the published SDK package.</description>
+  <description>Runnable example test suite (identity / flow / company-data) for the allus company-data Java SDK. Its own Maven project — not separately published, but its source ships inside the SDK package (#493).</description>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -42,8 +43,9 @@
       The identity OIDC scenarios (5/6) use a STANDARD, idiomatic Java OIDC client — Nimbus
       oauth2-oidc-sdk — for discovery, PKCE, client_secret_post, and verified id_token validation. That
       is the whole point of the OIDC demonstration (#314): a real OIDC library, not the allme SDK, drives
-      the login. It supports issuer override (any api_url) and client_secret_post. Declared here so it
-      never leaks into the published SDK package.
+      the login. It supports issuer override (any api_url) and client_secret_post. Declared here — in the
+      example's own pom, never in the SDK's — so it never becomes a dependency of the published SDK. (This
+      pom itself ships inside the SDK jar since #493; what stays out is the dependency, not the file.)
     -->
     <dependency>
       <groupId>com.nimbusds</groupId>

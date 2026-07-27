@@ -93,6 +93,28 @@
   </dependencies>
 
   <build>
+    <!--
+      Ship the example suite's SOURCE inside the published jar (#493), at examples/.
+      It is carried as RESOURCE (source, not compiled): the suite stays a separately
+      buildable project via its own examples/pom.xml, and nothing it depends on becomes
+      a dependency of the SDK. Transients are excluded so only source ships.
+    -->
+    <resources>
+      <resource>
+        <directory>${project.basedir}/src/main/resources</directory>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/examples</directory>
+        <targetPath>examples</targetPath>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>**/target/**</exclude>
+          <exclude>**/.runtime/**</exclude>
+          <exclude>**/.frontend/**</exclude>
+          <exclude>**/*.frontend.download.tar.gz</exclude>
+        </excludes>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
