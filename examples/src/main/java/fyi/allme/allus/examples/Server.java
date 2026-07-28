@@ -110,10 +110,8 @@ public final class Server {
                 serveStatic(ex, path);
             }
         } catch (Throwable t) {
-            Map<String, Object> err = new LinkedHashMap<>();
-            err.put("error", "server_error");
-            err.put("message", String.valueOf(t.getMessage()));
-            Http.json(ex, 500, err);
+            // The reason rides in `error`, the only key the suite renders (#583).
+            Http.failure(ex, 500, "server_error", Http.reasonOf(t));
         } finally {
             ex.close();
         }

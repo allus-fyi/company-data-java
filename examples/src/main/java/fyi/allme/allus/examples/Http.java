@@ -66,6 +66,40 @@ public final class Http {
         return null;
     }
 
+    /**
+     * The contract's FAILURE envelope (#583):
+     * {@code {"error": "<token> — <reason>", "message": "<reason>"}}.
+     *
+     * <p>The suite's shared client raises {@code body.error} VERBATIM and ignores every other key
+     * ({@code api.js}: {@code throw new Error(body.error || "start failed (…)")}), so a bare token in
+     * {@code error} reaches the developer as one uninformative word and the REASON — which the backend
+     * has right there — is dropped. That is the swallowed failure of standards.html §9: a failure
+     * converted into something indistinguishable from any other failure. The token is kept and the
+     * reason appended in the shape this contract already uses for exactly this ({@code no_origin — …},
+     * #574); {@code message} keeps the bare reason for a programmatic reader.
+     *
+     * <p>NOT used for the token-only refusals the suite handles by STATUS rather than body —
+     * {@code 409 not_configured} ({@code startScenario} maps the 409 before reading the body) and
+     * {@code 404 not_found}.
+     */
+    public static void failure(HttpExchange ex, int status, String token, String reason) throws IOException {
+        String text = reason == null ? "" : reason.trim();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", token + " — " + (text.isEmpty() ? "no reason was reported" : text));
+        body.put("message", text);
+        json(ex, status, body);
+    }
+
+    /**
+     * A throwable's reason. {@code getMessage()} is null for a whole family of faults
+     * (NullPointerException and kin) and {@code String.valueOf(null)} would report the literal reason
+     * "null"; the class name stands in.
+     */
+    public static String reasonOf(Throwable t) {
+        String raw = t.getMessage();
+        return (raw == null || raw.isBlank()) ? t.getClass().getName() : raw.trim();
+    }
+
     public static void json(HttpExchange ex, int status, Object data) throws IOException {
         byte[] b = Json.writeBytes(data);
         ex.getResponseHeaders().set("Content-Type", "application/json");

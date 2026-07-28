@@ -163,7 +163,7 @@ public final class FlowHandlers {
             Identity identity = client.identity();
             String companyUserId = identity.companyUserId();
             if (companyUserId == null || companyUserId.isEmpty()) {
-                Http.json(ex, 502, errorMessage("identity_error", "identity() returned no company_user_id"));
+                Http.failure(ex, 502, "identity_error", "identity() returned no company_user_id");
                 return;
             }
 
@@ -172,8 +172,8 @@ public final class FlowHandlers {
             Connection connection = client.connection(connectionId);
             String personId = connection.personId();
             if (personId == null || personId.isEmpty()) {
-                Http.json(ex, 502, errorMessage("connection_error",
-                    "connection " + connectionId + " has no personId (not found or not connected)"));
+                Http.failure(ex, 502, "connection_error",
+                    "connection " + connectionId + " has no personId (not found or not connected)");
                 return;
             }
 
@@ -185,11 +185,11 @@ public final class FlowHandlers {
 
             flowRunId = flowRun.id();
             if (flowRunId == null || flowRunId.isEmpty()) {
-                Http.json(ex, 502, errorMessage("trigger_error", "triggerFlowRun returned no run id"));
+                Http.failure(ex, 502, "trigger_error", "triggerFlowRun returned no run id");
                 return;
             }
         } catch (ApiException | ConfigException e) {
-            Http.json(ex, 502, errorMessage("start_failed", e.getMessage()));
+            Http.failure(ex, 502, "start_failed", Http.reasonOf(e));
             return;
         }
 
@@ -468,10 +468,4 @@ public final class FlowHandlers {
 
     // ── run/envelope helpers ─────────────────────────────────────────────────────
 
-    private static Map<String, Object> errorMessage(String error, String message) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("error", error);
-        out.put("message", message);
-        return out;
-    }
 }
