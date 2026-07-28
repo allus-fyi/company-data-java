@@ -4,13 +4,20 @@ import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
+import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -30,7 +37,9 @@ import java.util.stream.Stream;
  *       its sha256, unpack to {@code .frontend/<tag>/} (a present, verified bundle is a cache hit)</li>
  *   <li>assert the bundle's {@code contract.json} version == the backend's implemented contractVersion</li>
  *   <li>refuse a busy port with a clear message</li>
- *   <li>serve {@code http://localhost:${PORT:-8091}} on a SINGLE-thread executor (single worker)</li>
+ *   <li>serve port {@code ${PORT:-8091}} on ALL interfaces with a SINGLE-thread executor (single
+ *       worker), so a phone on the same network can reach it, printing every URL it is reachable
+ *       on (#553)</li>
  * </ol>
  */
 public final class Main {
@@ -73,12 +82,13 @@ public final class Main {
                 + "(one browser origin is shared across SDK examples, so only one runs at a time).");
         }
 
-        // 5. serve — SINGLE WORKER (single-thread executor)
-        HttpServer http = HttpServer.create(new InetSocketAddress("localhost", port), 0);
+        // 5. serve — SINGLE WORKER (single-thread executor), on ALL interfaces (#553): the wildcard
+        // InetSocketAddress(port) binds every interface, so a phone on the same network can reach it.
+        HttpServer http = HttpServer.create(new InetSocketAddress(port), 0);
         http.setExecutor(Executors.newSingleThreadExecutor());
         new Server(rt, frontend, sdkVersion(), port).attach(http);
         http.start();
-        System.err.println("serving http://localhost:" + port + "  (identity + flow + company-data — Ctrl-C to stop)");
+        printReachableUrls(port);
 
         // Keep the JVM alive (HttpServer runs on its own executor thread).
         Thread.currentThread().join();
@@ -156,14 +166,67 @@ public final class Main {
         return 8091;
     }
 
+    /** Probes the SAME address the server binds (all interfaces), not just loopback. */
     private static boolean portFree(int port) {
         try (ServerSocket s = new ServerSocket()) {
             s.setReuseAddress(false);
-            s.bind(new InetSocketAddress("localhost", port));
+            s.bind(new InetSocketAddress(port));
             return true;
         } catch (IOException e) {
             return false;
         }
+    }
+
+    /**
+     * Announces every URL the server is reachable on (#553).
+     *
+     * <p>The server binds all interfaces, so a phone on the same network can reach it — but only if
+     * the person holding the phone knows which address to type. Prints the loopback URL AND every
+     * non-loopback IPv4 address of this host, plus the plain warning that this is now open to the
+     * local network.
+     */
+    private static void printReachableUrls(int port) {
+        System.err.println("serving on ALL interfaces, port " + port
+            + "  (identity + flow + company-data — Ctrl-C to stop)");
+        System.err.println("  on this machine:  http://localhost:" + port);
+        List<String> lan = lanAddresses();
+        if (lan.isEmpty()) {
+            System.err.println("  on this network:  (no non-loopback IPv4 address found — is this machine on a network?)");
+        } else {
+            for (int i = 0; i < lan.size(); i++) {
+                System.err.println((i == 0 ? "  on this network:  " : "                    ")
+                    + "http://" + lan.get(i) + ":" + port);
+            }
+        }
+        System.err.println("  NOTE: anyone on your network can now reach this demo, and its setup panels accept and");
+        System.err.println("        store real credentials under .runtime/config/ — OAuth and data-client secrets,");
+        System.err.println("        private-key PEMs and their passphrases, and webhook signing secrets. It is a local");
+        System.err.println("        developer example, not a hardened service: run it only on a network you trust, and");
+        System.err.println("        only with sandbox credentials.");
+    }
+
+    /** Every non-loopback, non-link-local IPv4 address of this host (an IPv6 literal is not phone-typeable). */
+    private static List<String> lanAddresses() {
+        List<String> out = new ArrayList<>();
+        try {
+            for (NetworkInterface iface : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!iface.isUp() || iface.isLoopback()) {
+                    continue;
+                }
+                for (InetAddress addr : Collections.list(iface.getInetAddresses())) {
+                    if (!(addr instanceof Inet4Address) || addr.isLoopbackAddress() || addr.isLinkLocalAddress()) {
+                        continue;
+                    }
+                    String host = addr.getHostAddress();
+                    if (!out.contains(host)) {
+                        out.add(host);
+                    }
+                }
+            }
+        } catch (SocketException ignored) {
+            // no interface information available — the loopback URL above is still printed
+        }
+        return out;
     }
 
     private static int run(Path cwd, String... cmd) throws IOException, InterruptedException {

@@ -123,7 +123,7 @@ public final class IdentityHandlers {
         String apiUrl = strOr(in.get("apiUrl"), "");
         cfg.put("api_url", (apiUrl.isEmpty() ? DEFAULT_API_URL : apiUrl).replaceAll("/+$", ""));
         cfg.put("oauth_client_id", strOr(in.get("oauthClientId"), ""));
-        cfg.put("oauth_redirect_uri", redirectUri());
+        cfg.put("oauth_redirect_uri", redirectUri(ex));
         String secret = strOr(in.get("oauthClientSecret"), "");
         if (!secret.isEmpty()) {
             cfg.put("oauth_client_secret", secret);
@@ -548,7 +548,17 @@ public final class IdentityHandlers {
         return v.isEmpty() ? redirectUri() : v;
     }
 
-    /** The registered redirect URI: http://localhost:{port}/callback. */
+    /**
+     * The registered redirect URI: http://{host}/callback, host = the origin the browser used (#553).
+     * The server binds all interfaces, so a phone on the LAN saves ITS origin into the config file and
+     * the OAuth round-trip returns to the phone rather than to the phone's own localhost.
+     */
+    private String redirectUri(HttpExchange ex) {
+        String host = ex.getRequestHeaders().getFirst("Host");
+        return host == null || host.isEmpty() ? redirectUri() : "http://" + host + "/callback";
+    }
+
+    /** Fallback when no config was saved for the scenario: http://localhost:{port}/callback. */
     private String redirectUri() {
         return "http://localhost:" + port + "/callback";
     }
