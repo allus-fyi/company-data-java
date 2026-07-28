@@ -86,7 +86,7 @@ public final class Main {
         // InetSocketAddress(port) binds every interface, so a phone on the same network can reach it.
         HttpServer http = HttpServer.create(new InetSocketAddress(port), 0);
         http.setExecutor(Executors.newSingleThreadExecutor());
-        new Server(rt, frontend, sdkVersion(), port).attach(http);
+        new Server(rt, frontend, sdkVersion()).attach(http);
         http.start();
         printReachableUrls(port);
 

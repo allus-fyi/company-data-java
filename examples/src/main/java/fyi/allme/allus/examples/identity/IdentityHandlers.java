@@ -84,16 +84,29 @@ public final class IdentityHandlers {
     private static final String DEFAULT_API_URL = "https://api.allme.fyi";
     private static final String DEFAULT_AUTHORIZE_BASE = OAuthClient.DEFAULT_AUTHORIZE_URL; // web.allme.fyi/auth
 
+    /**
+     * Refusal when the request carries no Host header, so the browser's origin is unknown (#574). There is
+     * NO default host: substituting one (localhost) silently sends the round-trip to a DIFFERENT origin
+     * than the browser is on — a different localStorage and a redirect URI the OAuth app never registered.
+     */
+    private static final String NO_ORIGIN =
+        "no_origin — this request carried no Host header, so the OAuth redirect URI cannot be derived "
+        + "from the origin your browser is using. Open the example by its address (http://<host>:<port>/) "
+        + "and save the setup again.";
+
+    /** Refusal when the scenario's saved config holds no redirect URI to complete the exchange with. */
+    private static final String NO_STORED_ORIGIN =
+        "no_origin — the saved config has no oauth_redirect_uri. Save the scenario setup again from the "
+        + "browser you will complete the sign-in in.";
+
     /** The short-cycled poll budget: ONE logical SDK wait of ~2s per poll (contract §"reads"). */
     private static final long POLL_TIMEOUT_S = 2;
     private static final long POLL_INTERVAL_S = 2;
 
     private final Runtime rt;
-    private final int port;
 
-    public IdentityHandlers(Runtime rt, int port) {
+    public IdentityHandlers(Runtime rt) {
         this.rt = rt;
-        this.port = port;
     }
 
     /** This family's contribution to GET /api/meta: scenarios 1–8 (7 is the guide card). */
@@ -114,6 +127,12 @@ public final class IdentityHandlers {
     public void config(HttpExchange ex, int id) throws IOException {
         if (!"runnable".equals(SCENARIOS.get(id))) {
             Http.json(ex, 404, Map.of("error", "not_found"));
+            return;
+        }
+        // The redirect URI is derived from THIS request's origin and from nothing else (#574). Refuse
+        // rather than invent a host: the suite renders this sentence on Save.
+        if (requestHost(ex).isEmpty()) {
+            Http.json(ex, 400, Map.of("error", NO_ORIGIN));
             return;
         }
         Map<String, Object> in = Http.body(ex);
@@ -543,24 +562,39 @@ public final class IdentityHandlers {
         }
     }
 
+    /**
+     * The redirect URI recorded in the scenario's config file (used by the OIDC library) — the SAME value
+     * the authorize URL carried, so the two legs of the exchange cannot diverge. An absent record is a
+     * loud failure, never a substituted host (#574).
+     */
     private String configRedirectUri(int id) {
         String v = strOr(loadConfig(id).get("oauth_redirect_uri"), "");
-        return v.isEmpty() ? redirectUri() : v;
+        if (v.isEmpty()) {
+            throw new IllegalStateException(NO_STORED_ORIGIN);
+        }
+        return v;
+    }
+
+    /** The origin THIS request arrived on — the only source the redirect URI is ever derived from. */
+    private static String requestHost(HttpExchange ex) {
+        String host = ex.getRequestHeaders().getFirst("Host");
+        return host == null ? "" : host.trim();
     }
 
     /**
-     * The registered redirect URI: http://{host}/callback, host = the origin the browser used (#553).
-     * The server binds all interfaces, so a phone on the LAN saves ITS origin into the config file and
-     * the OAuth round-trip returns to the phone rather than to the phone's own localhost.
+     * The registered redirect URI: http://{host}/callback, host = the origin the browser actually used
+     * (#553). The server binds all interfaces, so a phone on the LAN saves ITS origin into the config file
+     * and the OAuth round-trip returns to the phone rather than to the phone's own localhost. Never falls
+     * back to a hardcoded host (#574) — `127.0.0.1` and `localhost` are DIFFERENT origins for redirect
+     * matching and for browser storage alike, so a substituted default drops the developer on an origin
+     * whose localStorage never held the setup and whose URI the OAuth app never registered.
      */
     private String redirectUri(HttpExchange ex) {
-        String host = ex.getRequestHeaders().getFirst("Host");
-        return host == null || host.isEmpty() ? redirectUri() : "http://" + host + "/callback";
-    }
-
-    /** Fallback when no config was saved for the scenario: http://localhost:{port}/callback. */
-    private String redirectUri() {
-        return "http://localhost:" + port + "/callback";
+        String host = requestHost(ex);
+        if (host.isEmpty()) {
+            throw new IllegalStateException(NO_ORIGIN);
+        }
+        return "http://" + host + "/callback";
     }
 
     // ── value / claim shaping ────────────────────────────────────────────────────

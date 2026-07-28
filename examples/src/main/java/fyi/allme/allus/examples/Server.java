@@ -61,11 +61,11 @@ public final class Server {
     private final FlowHandlers flow;
     private final CompanyDataHandlers companyData;
 
-    public Server(Runtime rt, Path frontendDir, String sdkVersion, int port) {
+    public Server(Runtime rt, Path frontendDir, String sdkVersion) {
         this.rt = rt;
         this.frontendDir = frontendDir;
         this.sdkVersion = sdkVersion;
-        this.identity = new IdentityHandlers(rt, port);
+        this.identity = new IdentityHandlers(rt);
         this.flow = new FlowHandlers(rt);
         this.companyData = new CompanyDataHandlers(rt);
     }
