@@ -192,7 +192,8 @@ The scenario setup inputs default to the deployed platform (`api_url =
 https://api.allme.fyi`; identity's authorize base = `https://web.allme.fyi/auth`).
 You register the demo's OAuth apps, data clients, services, flows, and webhooks in
 the **allus portal at [`portal.allus.fyi`](https://portal.allus.fyi)**; each
-scenario's setup checklist names the exact portal pages and any person-account
+scenario's setup checklist names the exact portal pages, gives the intended value for
+every control on each of them — including the ones to leave alone — and lists any person-account
 prerequisites.
 
 For the identity scenarios, register on every OAuth app you create the redirect URI
@@ -234,7 +235,7 @@ runtime, plumbing) lives one package up and is shared by all three families.
 ## Bumping the frontend pin
 
 The frontend ships as a checksummed release asset; the single pin lives in
-`frontend.lock` (`{"tag":"v0.6.1","sha256":"<sha256 of dist.tar.gz>"}`). To move
+`frontend.lock` (`{"tag":"v0.6.2","sha256":"<sha256 of dist.tar.gz>"}`). To move
 to a newer release: set `tag` + `sha256` from the release's
 `shasum -a 256 dist.tar.gz`, `rm -rf .frontend/`, and run again — it downloads the
 new tag, verifies the checksum, and checks the bundle's `contract.json` version
@@ -253,4 +254,4 @@ the same step; the startup guard refuses a mismatch loudly).
 | **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from what this backend implements (v3). Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |
 | **`frontend checksum MISMATCH`** | The downloaded `dist.tar.gz` doesn't match `frontend.lock`'s `sha256`. Fix the `sha256` or re-download; the example refuses an unverified bundle. |
 | **A data scenario shows `failed` with an HTTP/transport error** | The `api_url` / credentials in the setup panel can't reach the platform — check them; the run correctly surfaces the error rather than a blank success. |
-| **`start_failed` (flow) naming a missing connection / key** | The connection id, service PEM, or passphrase is wrong — re-check them in the setup and Save again. |
+| **`start_failed` (flow) naming a missing connection / key** | The connection id, service PEM, or passphrase is wrong — re-check them in the setup and Save again. The portal shows no per-service list of connected people; get the connection id by running the **Read connected people** scenario and opening its **Raw** view. |
