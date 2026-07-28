@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
 
+import fyi.allme.allus.examples.Util;
 import static fyi.allme.allus.examples.Util.action;
 import static fyi.allme.allus.examples.Util.asInt;
 import static fyi.allme.allus.examples.Util.calls;
@@ -55,6 +56,24 @@ public final class CompanyDataHandlers {
     public static final String DEFINITIONS = "companydata:definitions";
     public static final String CHANGES = "companydata:changes";
     public static final String WEBHOOK = "companydata:webhook";
+
+    /**
+     * The "what just happened" trace (#578). Every entry is {@code <SDK method> — <what that call did in
+     * THIS scenario>}, appended AT the call site, in the order the calls were made; an entry wrapped in
+     * parentheses is a step that is deliberately NOT an SDK call. The annotations are byte-identical in
+     * all six SDK examples — only the method reference is written in the language's own idiom — so one
+     * scenario teaches one thing whichever example a reader starts. Keep them in step when this handler
+     * changes.
+     */
+    private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
+    private static final String CALL_CONNECTIONS = "Client.connections — pages GET /api/company-data/connections: loads your request-field catalog first for value typing, then decrypts each person's values with the service key";
+    private static final String CALL_REQUEST_FIELDS = "Client.requestFields — GET /api/company-data/request-fields: your own request-field catalog, fetched once and cached for the life of the client";
+    private static final String CALL_PROCESS_CHANGES = "Client.processChanges — drains the change feed through the crash-safe pump: handler before ack, at-least-once (dedup on Change.id), failures to the local dead-letter store";
+    private static final String CALL_CREATE_DOCUMENT = "Client.createDocument — %s";
+    private static final String CALL_WEBHOOK_STARTED = "(webhook run started) — POST /webhook receives each delivery; every poll also drains the change feed as a fallback";
+    private static final String CALL_VERIFY_WEBHOOK = "Client.verifyWebhook — checks the delivery's X-Allus-Signature HMAC against the secret configured for its X-Allus-Webhook-Id; a failure answers 401";
+    private static final String CALL_PARSE_WEBHOOK = "Client.parseWebhook — turns the verified body into a typed Change, decrypting its value with the service key";
+    private static final String CALL_DRAIN_BATCH = "Client.drainBatch — the per-poll feed fallback: one unbuffered drain, so events still show up when no delivery can reach this machine";
     public static final String DOCUMENTS = "companydata:documents";
 
     /** id → "runnable" (insertion order = /api/meta order). Every scenario runs synchronously or accumulates. */
@@ -192,6 +211,7 @@ public final class CompanyDataHandlers {
         run.put("family", "companydata");
         run.put("scenario", id);
         try {
+            calls.add(CALL_SERVICE_BUILD);
             Client client = Client.fromConfig(rt.configPathFor(id).toString());
             Map<String, Object> result = op.apply(client, calls);
             run.put("status", "done");
@@ -211,6 +231,7 @@ public final class CompanyDataHandlers {
      * person), so two people who both filled the same slug stay distinguishable.
      */
     private Map<String, Object> doRead(Client client, List<String> calls) {
+        calls.add(CALL_CONNECTIONS);
         List<Map<String, Object>> connections = new ArrayList<>();
         for (Connection conn : client.connections()) {
             List<Map<String, Object>> values = new ArrayList<>();
@@ -232,7 +253,6 @@ public final class CompanyDataHandlers {
             c.put("values", values);
             connections.add(c);
         }
-        calls.add("Client.connections");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("connections", connections);
         return out;
@@ -244,6 +264,7 @@ public final class CompanyDataHandlers {
      * surface).
      */
     private Map<String, Object> doDefinitions(Client client, List<String> calls) {
+        calls.add(CALL_REQUEST_FIELDS);
         List<Map<String, Object>> fields = new ArrayList<>();
         for (RequestField f : client.requestFields()) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -254,7 +275,6 @@ public final class CompanyDataHandlers {
             row.put("one_time", f.oneTime());
             fields.add(row);
         }
-        calls.add("Client.requestFields");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fields", fields);
         return out;
@@ -267,6 +287,7 @@ public final class CompanyDataHandlers {
      * Change fields.
      */
     private Map<String, Object> doChanges(Client client, List<String> calls) {
+        calls.add(CALL_PROCESS_CHANGES);
         List<Map<String, Object>> events = new ArrayList<>();
         Set<String> seen = new java.util.HashSet<>();
         client.processChanges(c -> {
@@ -276,7 +297,6 @@ public final class CompanyDataHandlers {
             }
             events.add(projectChange(c, null));
         });
-        calls.add("Client.processChanges");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("events", events);
         out.put("drained", true);
@@ -329,6 +349,7 @@ public final class CompanyDataHandlers {
                 }
                 spec.req.shareCode(shareCode);
             }
+            calls.add(String.format(CALL_CREATE_DOCUMENT, spec.label));
             Document doc = client.createDocument(spec.req);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("index", index++);
@@ -337,7 +358,6 @@ public final class CompanyDataHandlers {
             row.put("status", doc.status());
             docs.add(row);
         }
-        calls.add("Client.createDocument ×" + specs.size());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("docs", docs);
         return out;
@@ -399,7 +419,7 @@ public final class CompanyDataHandlers {
         run.put("events", new ArrayList<>());
         run.put("seenFeedIds", new ArrayList<>()); // feed-only dedup set for the drainBatch() fallback
         run.put("unparseable", 0);
-        run.put("calls", calls("(webhook run started — POST /webhook receives; each poll also drainBatch()s the feed)"));
+        run.put("calls", calls(CALL_WEBHOOK_STARTED));
         rt.writeRun(runId, run);
         rt.writeRoute(webhookId, runId);
         Http.json(ex, 200, envelope(runId, action("none")));
@@ -434,8 +454,9 @@ public final class CompanyDataHandlers {
             return;
         }
 
+        recordCall(run, CALL_SERVICE_BUILD);
         Client client = Client.fromConfig(rt.configPathFor(WEBHOOK).toString());
-        recordCall(run, "Client.verifyWebhook");
+        recordCall(run, CALL_VERIFY_WEBHOOK);
         if (!client.verifyWebhook(rawBody, headers)) {
             // A genuine signature failure — persist the attempted verify so the calls trace stays truthful.
             rt.writeRun(route.get("runId"), run);
@@ -443,7 +464,7 @@ public final class CompanyDataHandlers {
             return;
         }
         try {
-            recordCall(run, "Client.parseWebhook");
+            recordCall(run, CALL_PARSE_WEBHOOK);
             Change change = client.parseWebhook(rawBody, headers);
             events(run).add(projectChange(change, "webhook"));
         } catch (WebhookException e) {
@@ -514,10 +535,11 @@ public final class CompanyDataHandlers {
             seen.add(String.valueOf(sid));
         }
         try {
+            boolean buildNew = recordCall(run, CALL_SERVICE_BUILD);
             Client client = Client.fromConfig(rt.configPathFor(WEBHOOK).toString());
             // Every poll ATTEMPTS the feed pull — record the call now (deduped), so an empty poll still
             // reports the drainBatch it performed rather than claiming no call.
-            boolean drainNew = recordCall(run, "Client.drainBatch");
+            boolean drainNew = recordCall(run, CALL_DRAIN_BATCH);
             boolean appended = false;
             for (Change change : client.drainBatch(DRAIN_MAX)) {
                 String cid = change.id();
@@ -531,7 +553,7 @@ public final class CompanyDataHandlers {
                 appended = true;
             }
             run.put("seenFeedIds", seenList);
-            if (appended || drainNew) {
+            if (appended || drainNew || buildNew) {
                 rt.writeRun(runId, run);
             }
         } catch (Throwable ignored) {
@@ -545,16 +567,8 @@ public final class CompanyDataHandlers {
      * matter how many deliveries / polls a call is attempted across. Returns true when the name was newly
      * added (so the caller can persist on that transition).
      */
-    @SuppressWarnings("unchecked")
     private static boolean recordCall(Map<String, Object> run, String name) {
-        Object c = run.get("calls");
-        List<Object> list = c instanceof List ? (List<Object>) c : new ArrayList<>();
-        run.put("calls", list);
-        if (list.contains(name)) {
-            return false;
-        }
-        list.add(name);
-        return true;
+        return Util.recordCall(run, name); // ONE implementation for all three families (standards §1)
     }
 
     @SuppressWarnings("unchecked")

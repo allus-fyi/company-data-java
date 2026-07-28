@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 import static fyi.allme.allus.examples.Util.action;
+import static fyi.allme.allus.examples.Util.addCall;
 import static fyi.allme.allus.examples.Util.asMapList;
 import static fyi.allme.allus.examples.Util.asStringList;
 import static fyi.allme.allus.examples.Util.envelope;
@@ -58,6 +59,22 @@ public final class FlowHandlers {
 
     /** The canned INVALID value the validation-demo submits once for an email field. */
     private static final String INVALID_EMAIL = "not-an-email";
+
+    /**
+     * The "what just happened" trace (#578). Every entry is {@code <SDK method> — <what that call did in
+     * THIS scenario>}, appended AT the call site, in the order the calls were made. The annotations are
+     * byte-identical in all six SDK examples — only the method reference is written in the language's own
+     * idiom — so one scenario teaches one thing whichever example a reader starts. Keep them in step when
+     * this handler changes.
+     */
+    private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
+    private static final String CALL_IDENTITY = "Client.identity — GET /api/company-data/whoami: this service's own company_user_id, which the COMPANY party binds to";
+    private static final String CALL_CONNECTION = "Client.connection — reads the configured connection; the connected person's id on it is what the CUSTOMER party binds to";
+    private static final String CALL_TRIGGER = "Client.triggerFlowRun — starts a run of the published flow for that connection, pinning the flow's latest published version";
+    private static final String CALL_FLOW_RUN = "Client.flowRun — re-read on every poll to see whose turn the run is on";
+    private static final String CALL_PROCESS = "Client.processFlowRun — drives ONE company step: decrypts the answers so far, fills the node, type-checks the values, encrypts a copy per party, submits — and generates the document when the submit lands on a document-mode leaf";
+    private static final String CALL_ANSWERS = "Client.flowRunAnswers — the completed run's answers, decrypted with the service key";
+    private static final String CALL_DOCUMENT = "Client.flowRunDocument — downloads the company's own copy of the generated contract and decrypts it with the service key";
 
     private final Runtime rt;
 
@@ -138,11 +155,12 @@ public final class FlowHandlers {
         List<String> calls = new ArrayList<>();
         String flowRunId;
         try {
+            calls.add(CALL_SERVICE_BUILD);
             Client client = serviceClient();
 
             // The COMPANY party binds to this service's own company_user_id.
+            calls.add(CALL_IDENTITY);
             Identity identity = client.identity();
-            calls.add("Client.identity");
             String companyUserId = identity.companyUserId();
             if (companyUserId == null || companyUserId.isEmpty()) {
                 Http.json(ex, 502, errorMessage("identity_error", "identity() returned no company_user_id"));
@@ -150,8 +168,8 @@ public final class FlowHandlers {
             }
 
             // The CUSTOMER party binds to the connected person's public personId (no public user_id).
+            calls.add(CALL_CONNECTION);
             Connection connection = client.connection(connectionId);
-            calls.add("Client.connection");
             String personId = connection.personId();
             if (personId == null || personId.isEmpty()) {
                 Http.json(ex, 502, errorMessage("connection_error",
@@ -162,8 +180,8 @@ public final class FlowHandlers {
             Map<String, String> bindings = new LinkedHashMap<>();
             bindings.put(PARTY_COMPANY, companyUserId);
             bindings.put(PARTY_CUSTOMER, personId);
+            calls.add(CALL_TRIGGER);
             FlowRun flowRun = client.triggerFlowRun(flowId, connectionId, bindings);
-            calls.add("Client.triggerFlowRun");
 
             flowRunId = flowRun.id();
             if (flowRunId == null || flowRunId.isEmpty()) {
@@ -218,9 +236,10 @@ public final class FlowHandlers {
         }
 
         try {
+            run.put("calls", addCall(run.get("calls"), CALL_SERVICE_BUILD));
             Client client = serviceClient();
+            run.put("calls", addCall(run.get("calls"), CALL_FLOW_RUN));
             FlowRun flowRun = client.flowRun(flowRunId);
-            run.put("calls", addCall(run.get("calls"), "Client.flowRun"));
 
             String status = strOr(flowRun.status(), "");
             String companyParty = flowRun.companyPartyKey();
@@ -289,9 +308,9 @@ public final class FlowHandlers {
         };
 
         List<Map<String, Object>> steps = asMapList(run.get("steps"));
+        run.put("calls", addCall(run.get("calls"), CALL_PROCESS));
         try {
             client.processFlowRun(flowRunId, fillNode);
-            run.put("calls", addCall(run.get("calls"), "Client.processFlowRun"));
             // Advanced: every field filled for this node was accepted.
             for (Map<String, String> f : filled) {
                 Map<String, Object> step = new LinkedHashMap<>();
@@ -307,7 +326,6 @@ public final class FlowHandlers {
         } catch (ValidationException e) {
             // The canned invalid value was rejected BEFORE submit — record it and mark the node so the
             // next poll submits the valid value. The node did NOT advance.
-            run.put("calls", addCall(run.get("calls"), "Client.processFlowRun"));
             String submitted = INVALID_EMAIL;
             for (Map<String, String> f : filled) {
                 if (f.get("slug").equals(e.getSlug())) {
@@ -339,8 +357,8 @@ public final class FlowHandlers {
      */
     private Map<String, Object> complete(Map<String, Object> run, Client client, FlowRun flowRun,
                                          String flowRunId) {
+        run.put("calls", addCall(run.get("calls"), CALL_ANSWERS));
         Map<String, Object> answers = client.flowRunAnswers(flowRun);
-        run.put("calls", addCall(run.get("calls"), "Client.flowRunAnswers"));
         List<Map<String, Object>> answersOut = new ArrayList<>();
         for (Map.Entry<String, Object> e : answers.entrySet()) {
             Map<String, Object> a = new LinkedHashMap<>();
@@ -352,8 +370,8 @@ public final class FlowHandlers {
 
         if ("document".equals(flowRun.outputMode())) {
             try {
+                run.put("calls", addCall(run.get("calls"), CALL_DOCUMENT));
                 byte[] bytes = client.flowRunDocument(flowRunId);
-                run.put("calls", addCall(run.get("calls"), "Client.flowRunDocument"));
                 Map<String, Object> doc = new LinkedHashMap<>();
                 doc.put("status", "downloaded");
                 doc.put("downloaded", true);
@@ -455,14 +473,5 @@ public final class FlowHandlers {
         out.put("error", error);
         out.put("message", message);
         return out;
-    }
-
-    /** Append a call name preserving first-occurrence order (a poll may repeat flowRun across polls). */
-    private static List<String> addCall(Object callsObj, String name) {
-        List<String> calls = asStringList(callsObj);
-        if (!calls.contains(name)) {
-            calls.add(name);
-        }
-        return calls;
     }
 }

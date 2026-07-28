@@ -103,6 +103,38 @@ public final class IdentityHandlers {
     private static final long POLL_TIMEOUT_S = 2;
     private static final long POLL_INTERVAL_S = 2;
 
+    /**
+     * The "what just happened" trace (#578). Every entry is {@code <SDK method> — <what that call did in
+     * THIS scenario>}, appended AT the call site, in the order the calls were made; an entry wrapped in
+     * parentheses is a step that is deliberately NOT an SDK call. The annotations are byte-identical in
+     * all six SDK examples — only the method reference is written in the language's own idiom — so one
+     * scenario teaches one thing whichever example a reader starts. Keep them in step when this handler
+     * changes: the panel is headed "What just happened", and a list that no longer matches the code is
+     * worse than a short one.
+     */
+    private static final String CALL_IDW_BUILD = "OAuthClient.fromConfig — builds the RP client from the saved config file: client id, secret and the registered redirect URI";
+    private static final String CALL_AUTH_SIGNIN = "OAuthClient.authorizeUrl — the consent URL the person is sent to (mode signin, response_mode redirect, PKCE S256, state = this run id)";
+    private static final String CALL_AUTH_SIGNIN_DETACHED = "OAuthClient.authorizeUrl — the sign-in URL behind the link + QR (mode signin, response_mode detached, PKCE S256, state = this run id)";
+    private static final String CALL_AUTH_ONE_TIME = "OAuthClient.authorizeUrl — the consent URL the person is sent to (mode one_time, claims email + phone, PKCE S256, state = this run id)";
+    private static final String CALL_AUTH_CONNECT = "OAuthClient.authorizeUrl — the consent URL the person is sent to (mode connect, PKCE S256, state = this run id)";
+    private static final String CALL_AUTH_ENROLL = "OAuthClient.authorizeUrl — the enrollment URL the person is sent to (mode 2fa_enroll, response_mode redirect)";
+    private static final String CALL_AUTH_ENROLL_DETACHED = "OAuthClient.authorizeUrl — the enrollment URL behind the link + QR (mode 2fa_enroll, response_mode detached)";
+    private static final String CALL_POLL_SIGNIN = "OAuthClient.pollResult — polls POST /oauth2/result until the phone delivers the code (one 2s-bounded call per browser poll)";
+    private static final String CALL_POLL_ENROLL = "OAuthClient.pollResult — polls POST /oauth2/result until the phone delivers {enrolled: true} (one 2s-bounded call per browser poll)";
+    private static final String CALL_COMPLETE_SIGNIN = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, then reads GET /api/oauth/userinfo; mode signin returns the identity only, no claim values";
+    private static final String CALL_COMPLETE_ONE_TIME = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, reads GET /api/oauth/userinfo, and decrypts every claim value with the OAuth app private key";
+    private static final String CALL_COMPLETE_CONNECT = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, then reads GET /api/oauth/userinfo; connect delivers no values here, the live ones come from the data client below";
+    private static final String CALL_ENROLLED_CALLBACK = "(callback ?enrolled=true) — the redirect-leg enrollment outcome; there is nothing to exchange, so no further SDK call";
+    private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
+    private static final String CALL_CONNECTIONS_LIVE = "Client.connections — pages GET /api/company-data/connections and decrypts each person's values with the service key; the run keeps the one whose share code just signed in";
+    private static final String CALL_TWO_FACTOR = "Client.twoFactor — the service-2FA sub-client, on the same data-client credentials";
+    private static final String CALL_CHALLENGE = "TwoFactorClient.challenge — POST /api/service-2fa/challenges for the person's share code with a per-run idempotency key; returns the challenge id, plus matching digits when the service has number matching on";
+    private static final String CALL_WAIT_RESULT = "TwoFactorClient.waitForResult — polls GET /api/service-2fa/challenges/{id} until the status leaves pending: approved, denied, expired or revoked (one 2s-bounded call per browser poll; the first terminal read burns the result)";
+    private static final String CALL_OIDC_DISCOVERY = "(oidc) OIDCProviderMetadata.resolve — discovery: fetches /.well-known/openid-configuration from the configured API base";
+    private static final String CALL_OIDC_AUTH_URL = "(oidc) AuthenticationRequest.toURI — the authorization URL (scope openid profile email, PKCE S256, nonce, state = this run id)";
+    private static final String CALL_OIDC_TOKEN = "(oidc) TokenRequest.send — exchanges the code at the discovered token endpoint (client_secret_post + PKCE verifier)";
+    private static final String CALL_OIDC_VERIFY = "(oidc) IDTokenValidator.validate — verifies the id_token against the JWKS: signature, issuer, audience and nonce; the claims shown are that verified token's";
+
     private final Runtime rt;
 
     public IdentityHandlers(Runtime rt) {
@@ -216,6 +248,8 @@ public final class IdentityHandlers {
                 Pkce.Pair pkce = Pkce.generate();
                 run.put("verifier", pkce.verifier());
                 String mode = id == 1 ? "signin" : (id == 3 ? "one_time" : "connect");
+                run.put("calls", calls(CALL_IDW_BUILD,
+                    id == 3 ? CALL_AUTH_ONE_TIME : (id == 4 ? CALL_AUTH_CONNECT : CALL_AUTH_SIGNIN)));
                 OAuthClient oauth = oauthClientFor(id);
                 OAuthClient.AuthorizeOptions opts = new OAuthClient.AuthorizeOptions()
                     .state(runId).responseMode("redirect").codeChallenge(pkce.challenge());
@@ -223,7 +257,6 @@ public final class IdentityHandlers {
                     opts.claims(claimObjects(asStringList(rt.readConfigMeta(key(id)).get("claims"))));
                 }
                 String url = oauth.authorizeUrl(mode, opts);
-                run.put("calls", calls("OAuthClient.authorizeUrl"));
                 rt.writeRun(runId, run);
                 Http.json(ex, 200, envelope(runId, action("redirect", "url", url)));
             }
@@ -231,10 +264,10 @@ public final class IdentityHandlers {
                 Pkce.Pair pkce = Pkce.generate();
                 run.put("verifier", pkce.verifier());
                 run.put("wait", "detached_signin");
+                run.put("calls", calls(CALL_IDW_BUILD, CALL_AUTH_SIGNIN_DETACHED));
                 OAuthClient oauth = oauthClientFor(id);
                 String url = oauth.authorizeUrl("signin", new OAuthClient.AuthorizeOptions()
                     .state(runId).responseMode("detached").codeChallenge(pkce.challenge()));
-                run.put("calls", calls("OAuthClient.authorizeUrl"));
                 rt.writeRun(runId, run);
                 Http.json(ex, 200, envelope(runId, action("detached", "url", url)));
             }
@@ -245,7 +278,7 @@ public final class IdentityHandlers {
                 run.put("nonce", nonce.getValue());
                 OIDCProviderMetadata provider = oidcProvider(id);
                 URI url = buildOidcAuthUri(provider, id, runId, verifier, nonce);
-                run.put("calls", calls("(oidc) OIDCProviderMetadata.resolve", "(oidc) AuthenticationRequest.toURI"));
+                run.put("calls", calls(CALL_OIDC_DISCOVERY, CALL_OIDC_AUTH_URL));
                 rt.writeRun(runId, run);
                 Http.json(ex, 200, envelope(runId, action("redirect", "url", url.toString())));
             }
@@ -257,10 +290,10 @@ public final class IdentityHandlers {
                 idempotencyKey = idempotencyKey.substring(0, Math.min(64, idempotencyKey.length()));
                 run.put("challengeIdemKey", idempotencyKey);
                 run.put("wait", "challenge");
+                run.put("calls", calls(CALL_SERVICE_BUILD, CALL_TWO_FACTOR, CALL_CHALLENGE));
                 Client client = serviceClientFor(id);
                 TwoFactorChallenge challenge = client.twoFactor().challenge(shareCode, idempotencyKey, context);
                 run.put("challengeId", challenge.challengeId());
-                run.put("calls", calls("Client.twoFactor", "TwoFactorClient.challenge"));
                 rt.writeRun(runId, run);
                 Map<String, Object> act = new LinkedHashMap<>();
                 act.put("type", "challenge");
@@ -296,7 +329,8 @@ public final class IdentityHandlers {
         run.put("isEnroll", true);
         run.put("status", "pending");
         run.put("state", runId);
-        run.put("calls", calls("OAuthClient.authorizeUrl"));
+        run.put("calls", calls(CALL_IDW_BUILD,
+            responseMode.equals("detached") ? CALL_AUTH_ENROLL_DETACHED : CALL_AUTH_ENROLL));
         run.put("wait", responseMode.equals("detached") ? "detached_enroll" : "enroll_redirect");
         rt.writeRun(runId, run);
 
@@ -320,7 +354,7 @@ public final class IdentityHandlers {
                 // Redirect-leg enrollment outcome (#436) — nothing to exchange; record it.
                 run.put("status", "done");
                 run.put("result", Map.of("enrolled", true));
-                appendCall(run, "callback(enrolled=true)");
+                appendCall(run, CALL_ENROLLED_CALLBACK);
             } else if (q.get("code") != null && !q.get("code").isEmpty()) {
                 String code = q.get("code");
                 run = (id == 5 || id == 6) ? completeOidc(run, code) : completeSignin(run, code);
@@ -371,26 +405,26 @@ public final class IdentityHandlers {
         int id = asInt(run.get("scenario"));
         try {
             if ("detached_signin".equals(wait)) {
+                appendCall(run, CALL_POLL_SIGNIN);
                 OAuthClient oauth = oauthClientFor(id);
                 Map<String, Object> b = oauth.pollResult(strOr(run.get("state"), ""), POLL_TIMEOUT_S, POLL_INTERVAL_S);
-                appendCall(run, "OAuthClient.pollResult");
                 String code = strOr(b.get("code"), "");
                 if (!code.isEmpty()) {
                     run = completeSignin(run, code);
                 }
             } else if ("detached_enroll".equals(wait)) {
+                appendCall(run, CALL_POLL_ENROLL);
                 OAuthClient oauth = oauthClientFor(id);
                 Map<String, Object> b = oauth.pollResult(strOr(run.get("state"), ""), POLL_TIMEOUT_S, POLL_INTERVAL_S);
-                appendCall(run, "OAuthClient.pollResult");
                 if (Boolean.TRUE.equals(b.get("enrolled"))) {
                     run.put("status", "done");
                     run.put("result", Map.of("enrolled", true));
                 }
             } else if ("challenge".equals(wait)) {
+                appendCall(run, CALL_WAIT_RESULT);
                 Client client = serviceClientFor(id);
                 TwoFactorResult res = client.twoFactor()
                     .waitForResult(strOr(run.get("challengeId"), ""), POLL_TIMEOUT_S, POLL_INTERVAL_S);
-                appendCall(run, "TwoFactorClient.waitForResult");
                 run.put("status", "done");
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("status", res.status());
@@ -424,9 +458,9 @@ public final class IdentityHandlers {
      */
     private Map<String, Object> completeSignin(Map<String, Object> run, String code) {
         int id = asInt(run.get("scenario"));
+        appendCall(run, id == 3 ? CALL_COMPLETE_ONE_TIME : (id == 4 ? CALL_COMPLETE_CONNECT : CALL_COMPLETE_SIGNIN));
         OAuthClient oauth = oauthClientFor(id);
         OAuthClient.SignInResult out = oauth.completeSignIn(code, strOrNull(run.get("verifier")));
-        appendCall(run, "OAuthClient.completeSignIn");
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("user", out.user());
@@ -437,7 +471,9 @@ public final class IdentityHandlers {
         if (id == 4) {
             // Connect: read the person's LIVE values via the service data client.
             String shareCode = out.user() != null ? strOr(out.user().get("share_code"), "") : "";
+            appendCall(run, CALL_SERVICE_BUILD);
             Client client = serviceClientFor(id);
+            appendCall(run, CALL_CONNECTIONS_LIVE);
             Map<String, Object> live = new LinkedHashMap<>();
             for (Connection conn : client.connections()) {
                 if (!shareCode.isEmpty() && shareCode.equals(conn.shareCode())) {
@@ -445,7 +481,6 @@ public final class IdentityHandlers {
                     break;
                 }
             }
-            appendCall(run, "Client.connections");
             result.put("live_values", live);
         }
 
@@ -473,8 +508,8 @@ public final class IdentityHandlers {
             Scope scope = new Scope("openid", "profile", "email");
 
             TokenRequest tokenReq = new TokenRequest(provider.getTokenEndpointURI(), clientAuth, grant, scope);
+            appendCall(run, CALL_OIDC_TOKEN);
             HTTPResponse httpResp = tokenReq.toHTTPRequest().send();
-            appendCall(run, "(oidc) TokenRequest.send");
             TokenResponse tokenResp = OIDCTokenResponseParser.parse(httpResp);
             if (!tokenResp.indicatesSuccess()) {
                 throw new RuntimeException("OIDC token endpoint rejected the code: "
@@ -491,8 +526,8 @@ public final class IdentityHandlers {
                 new ClientID(clientId),
                 com.nimbusds.jose.JWSAlgorithm.RS256,
                 provider.getJWKSetURI().toURL());
+            appendCall(run, CALL_OIDC_VERIFY);
             IDTokenClaimsSet claims = validator.validate(idToken, new Nonce(strOr(run.get("nonce"), "")));
-            appendCall(run, "(oidc) IDTokenValidator.validate");
 
             run.put("status", "done");
             run.put("result", Map.of("claims", claims.toJSONObject()));
@@ -657,11 +692,11 @@ public final class IdentityHandlers {
         return run;
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * Record a call on a run's "what just happened" trace through the shared, deduping implementation
+     * (#578, standards §1) — the identity family used to append unconditionally.
+     */
     private static void appendCall(Map<String, Object> run, String name) {
-        Object c = run.get("calls");
-        List<Object> list = c instanceof List ? (List<Object>) c : new ArrayList<>();
-        list.add(name);
-        run.put("calls", list);
+        Util.recordCall(run, name);
     }
 }
