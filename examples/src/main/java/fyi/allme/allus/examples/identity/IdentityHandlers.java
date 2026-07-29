@@ -80,6 +80,14 @@ public final class IdentityHandlers {
     private static final Set<Integer> SERVICE_SCENARIOS = Set.of(4, 8);
     /** Scenarios that build an OAuth consent URL via {@link OAuthClient} (need the authorize base). */
     private static final Set<Integer> OAUTH_URL_SCENARIOS = Set.of(1, 2, 3, 4, 8);
+    /**
+     * Scenarios whose {@link OAuthClient#completeSignIn} response can carry claim values (userinfo
+     * {@code values} non-empty) and therefore need the OAuth app private key configured to decrypt them:
+     * mode one_time and mode connect, both delivered as app-key ciphertext through userinfo. Mode signin
+     * (scenarios 1, 2) never carries values; scenario 8 never calls this leg at all; scenarios 5/6 run the
+     * Nimbus OIDC library instead of this SDK's decrypt path.
+     */
+    private static final Set<Integer> CLAIM_VALUE_SCENARIOS = Set.of(3, 4);
 
     private static final String DEFAULT_API_URL = "https://api.allme.fyi";
     private static final String DEFAULT_AUTHORIZE_BASE = OAuthClient.DEFAULT_AUTHORIZE_URL; // web.allme.fyi/auth
@@ -121,7 +129,7 @@ public final class IdentityHandlers {
     private static final String CALL_POLL_ENROLL = "OAuthClient.pollResult — polls POST /oauth2/result until the phone delivers {enrolled: true} (one 2s-bounded call per browser poll)";
     private static final String CALL_COMPLETE_SIGNIN = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, then reads GET /api/oauth/userinfo; mode signin returns the identity only, no claim values";
     private static final String CALL_COMPLETE_ONE_TIME = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, reads GET /api/oauth/userinfo, and decrypts every claim value with the OAuth app private key";
-    private static final String CALL_COMPLETE_CONNECT = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, then reads GET /api/oauth/userinfo; connect delivers no values here, the live ones come from the data client below";
+    private static final String CALL_COMPLETE_CONNECT = "OAuthClient.completeSignIn — exchanges the code + PKCE verifier at POST /oauth2/token, reads GET /api/oauth/userinfo, and decrypts the consented claim values with the OAuth app private key; the connection's live values still come separately from the data client below";
     private static final String CALL_ENROLLED_CALLBACK = "(callback ?enrolled=true) — the redirect-leg enrollment outcome; there is nothing to exchange, so no further SDK call";
     private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
     private static final String CALL_CONNECTIONS_LIVE = "Client.connections — pages GET /api/company-data/connections and decrypts each person's values with the service key; the run keeps the one whose share code just signed in";
@@ -178,8 +186,9 @@ public final class IdentityHandlers {
             cfg.put("oauth_client_secret", secret);
         }
 
-        // Scenario 3 (one_time): the OAuth app private key decrypts the claim values.
-        if (id == 3) {
+        // Any scenario whose run can carry claim values (CLAIM_VALUE_SCENARIOS) needs the OAuth app
+        // private key to decrypt them.
+        if (CLAIM_VALUE_SCENARIOS.contains(id)) {
             String pem = strOr(in.get("oauthPrivateKeyPem"), "");
             if (!pem.isEmpty()) {
                 cfg.put("oauth_private_key", rt.materializeConfigKey(pem));
