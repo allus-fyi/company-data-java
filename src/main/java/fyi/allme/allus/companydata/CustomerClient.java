@@ -3,6 +3,7 @@ package fyi.allme.allus.companydata;
 import fyi.allme.allus.companydata.internal.Http;
 import fyi.allme.allus.companydata.internal.ModelDeps;
 import fyi.allme.allus.companydata.internal.Json;
+import fyi.allme.allus.companydata.internal.Transport;
 
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
@@ -88,7 +89,7 @@ public final class CustomerClient {
         this.http = http != null ? http : new Http(config.toCustomerHttpConfig());
         this.accountKey = Webhooks.loadAccountKey(config);
         // No slug catalog for customer events (they never carry a person's secret field).
-        this.deps = new ModelDeps(this::decryptAccount, slug -> null, valueUrl -> Wrapper.of(fetchBinary(valueUrl)));
+        this.deps = new ModelDeps(this::decryptAccount, slug -> null, this::fetchBinary);
     }
 
     /** Build from a customer-role JSON config file. */
@@ -338,12 +339,23 @@ public final class CustomerClient {
         return Crypto.decrypt(Wrapper.of(wrapper), accountKey);
     }
 
-    private Object fetchBinary(String valueUrl) {
-        Object body = http.get(valueUrl);
-        if (body instanceof Map<?, ?> m && m.containsKey("value")) {
-            return m.get("value");
+    /**
+     * Fetch a binary file endpoint and classify its response — the same two-shape rule the company
+     * side uses (#590), because the same route serves both roles: the shape follows the person's
+     * privacy choice, not the caller's role. See {@link BinaryFetchResult#isPlaintextShape}.
+     */
+    private BinaryFetchResult fetchBinary(String valueUrl) {
+        Transport.Response resp = http.getResponse(valueUrl);
+        String contentType = resp.header("Content-Type");
+        String digest = resp.header(BinaryFetchResult.DIGEST_HEADER);
+
+        if (BinaryFetchResult.isPlaintextShape(contentType)) {
+            return BinaryFetchResult.plaintext(resp.bodyBytes(), contentType, digest);
         }
-        return body;
+
+        Object body = http.parseBody(resp);
+        Object value = body instanceof Map<?, ?> m && m.containsKey("value") ? m.get("value") : body;
+        return BinaryFetchResult.encrypted(Wrapper.of(value), contentType, digest);
     }
 
     /**

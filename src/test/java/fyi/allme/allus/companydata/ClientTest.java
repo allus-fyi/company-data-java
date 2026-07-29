@@ -284,6 +284,74 @@ class ClientTest {
         assertEquals(binary.get("inner_full_sha256"), sha256(data));
     }
 
+    /**
+     * #590 — a person whose source field is NOT private makes the same slot serve the file's own
+     * Content-Type and the raw bytes. The handle serves them as-is (no decrypt, no service key
+     * needed) and exposes the platform's digest header.
+     */
+    @Test
+    void binaryHandleServesPlaintextBytes(@TempDir Path tmp) throws Exception {
+        byte[] fileBytes = new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe0, 'n', 'o', 't', '-', 'a', '-', 'j', 'p', 'g'};
+        String page = fyi.allme.allus.companydata.internal.Json.write(Map.of(
+            "total", 1, "items", List.of(Map.of(
+                "connection_id", "csc-1", "user_id", "person-1", "display_name", "Anna",
+                "values", Map.of("logo", Map.of("value_url",
+                    "https://api.allme.fyi/api/company-data/connections/csc-1/slots/sf-9/file", "live", true))))));
+        RoutingTransport t = new RoutingTransport((url, params) -> {
+            if (url.endsWith("/request-fields")) {
+                return FakeTransport.json(200, REQUEST_FIELDS_BODY);
+            }
+            if (url.endsWith("/connections")) {
+                return FakeTransport.json(200, page);
+            }
+            if (url.endsWith("/slots/sf-9/file")) {
+                return FakeTransport.bytes(200, fileBytes, Map.of(
+                    "Content-Type", List.of("image/jpeg"),
+                    "X-Allus-Content-Sha256", List.of(sha256(fileBytes))));
+            }
+            throw new AssertionError("unexpected GET " + url);
+        });
+        Client client = new Client(config(tmp), t);
+        BinaryHandle handle = (BinaryHandle) client.connections().iterator().next()
+            .values().get("logo").value();
+
+        assertArrayEquals(fileBytes, handle.bytes());
+        assertEquals("image/jpeg", handle.contentType());
+        assertEquals(sha256(fileBytes), handle.contentSha256());
+    }
+
+    /** #590 — a 410 file_expired surfaces the digest and the expiry date through ApiException.details(). */
+    @Test
+    void binaryHandleExpiredAnswerCarriesDigest(@TempDir Path tmp) throws Exception {
+        String page = fyi.allme.allus.companydata.internal.Json.write(Map.of(
+            "total", 1, "items", List.of(Map.of(
+                "connection_id", "csc-1", "user_id", "person-1", "display_name", "Anna",
+                "values", Map.of("logo", Map.of("value_url",
+                    "https://api.allme.fyi/api/company-data/connections/csc-1/slots/sf-9/file", "live", false))))));
+        RoutingTransport t = new RoutingTransport((url, params) -> {
+            if (url.endsWith("/request-fields")) {
+                return FakeTransport.json(200, REQUEST_FIELDS_BODY);
+            }
+            if (url.endsWith("/connections")) {
+                return FakeTransport.json(200, page);
+            }
+            return FakeTransport.json(410, fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                "error", "This file has expired",
+                "error_key", "company_data.file_expired",
+                "content_sha256", "abc123",
+                "expired_at", "2026-07-01T00:00:00Z")));
+        });
+        Client client = new Client(config(tmp), t);
+        BinaryHandle handle = (BinaryHandle) client.connections().iterator().next()
+            .values().get("logo").value();
+
+        ApiException exc = assertThrows(ApiException.class, handle::bytes);
+        assertEquals(410, exc.status());
+        assertEquals("company_data.file_expired", exc.errorKey());
+        assertEquals("abc123", exc.details().get("content_sha256"));
+        assertEquals("2026-07-01T00:00:00Z", exc.details().get("expired_at"));
+    }
+
     // ── connection(id) ──────────────────────────────────────────────────────────
 
     @Test

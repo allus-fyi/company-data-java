@@ -157,13 +157,34 @@ public final class Client {
         return Crypto.decrypt(Wrapper.of(wrapper), privateKey);
     }
 
-    private Wrapper binaryFetch(String valueUrl) {
-        Object body = http.get(valueUrl);
-        if (body instanceof Map<?, ?> m && m.containsKey("value")) {
-            return Wrapper.of(m.get("value"));
+    /**
+     * Fetch a company-facing binary file endpoint and classify its response.
+     *
+     * <p>#590 — the endpoint has TWO 200 shapes and which one arrives is not the company's to
+     * predict: a person whose source field is PRIVATE yields {@code application/json}
+     * {@code {"encrypted":true,"value":<wrapper>}}, a person whose field is not yields the file's
+     * own Content-Type and the bytes themselves. The decision is
+     * {@link BinaryFetchResult#isPlaintextShape}'s and is made on {@code Content-Type} alone, never
+     * by sniffing the body — a PDF or an image that happened to start with a brace would be
+     * indistinguishable from a wrapper.
+     *
+     * <p>A 410 {@code company_data.file_expired} (the answer's 90-day retention has elapsed)
+     * surfaces as an {@link ApiException} whose {@link ApiException#details()} carry
+     * {@code content_sha256} and {@code expired_at}.
+     */
+    private BinaryFetchResult binaryFetch(String valueUrl) {
+        Transport.Response resp = http.getResponse(valueUrl);
+        String contentType = resp.header("Content-Type");
+        String digest = resp.header(BinaryFetchResult.DIGEST_HEADER);
+
+        if (BinaryFetchResult.isPlaintextShape(contentType)) {
+            return BinaryFetchResult.plaintext(resp.bodyBytes(), contentType, digest);
         }
+
+        Object body = http.parseBody(resp);
         // Defensive: some shapes might return the wrapper directly.
-        return Wrapper.of(body);
+        Object value = body instanceof Map<?, ?> m && m.containsKey("value") ? m.get("value") : body;
+        return BinaryFetchResult.encrypted(Wrapper.of(value), contentType, digest);
     }
 
     private String typeForSlug(String slug) {

@@ -25,15 +25,34 @@ import fyi.allme.allus.companydata.RateLimitException;
 
 ```java
 class ApiException extends RuntimeException {
-    int    status();      // the HTTP status
-    String errorKey();    // the platform error_key, when the body provided one (else null)
-    String apiMessage();  // a human-readable message (else null)
+    int                 status();      // the HTTP status
+    String              errorKey();    // the platform error_key, when the body provided one (else null)
+    String              apiMessage();  // a human-readable message (else null)
+    Map<String,Object>  details();     // the error body's remaining fields, verbatim (else empty)
 }
 ```
 
 `getMessage()` is `"HTTP <status> (<errorKey>): <message>"`. A transport failure
 (no HTTP response — e.g. a connection error) surfaces as `ApiException` with
 `status() == 0`.
+
+`details()` is every field of the error body other than `error_key` / `error` /
+`message`, so a response that carries actionable data beside its key is readable
+without a bespoke exception type. The live example (#590) is a **410
+`company_data.file_expired`** from a binary slot's file endpoint — a frozen
+(Share-once) answer whose 90-day retention has elapsed:
+
+```java
+try {
+    byte[] scan = conn.values().get("passport_scan").asBinary().bytes();
+} catch (ApiException e) {
+    if ("company_data.file_expired".equals(e.errorKey())) {
+        // your archived copy is now the only one — and you can still prove what it is
+        String sha       = (String) e.details().get("content_sha256");
+        String expiredAt = (String) e.details().get("expired_at");
+    }
+}
+```
 
 ## `RateLimitException`
 
@@ -59,7 +78,7 @@ reason. If you catch it, wait `e.retryAfter()` (or a default) before retrying.
 | `Client.fromConfig` / `fromEnv` / `new Client(...)` | `ConfigException` |
 | Token / any call (auth) | `AuthException` |
 | `connections`, `connection`, `requestFields`, `logs`, pump drains | `ApiException`, `RateLimitException` |
-| Value access / `BinaryHandle.bytes()` / pump delivery | `DecryptException` |
+| Value access / `BinaryHandle.bytes()` / pump delivery | `DecryptException`; `BinaryHandle.bytes()` also `ApiException` (it does the deferred GET — 410 `company_data.file_expired` when a frozen answer's retention has elapsed) |
 | `verifyWebhook` / `parseWebhook` / `handleWebhook` | `WebhookException` (`verifyWebhook` returns `false` rather than throwing on a bad signature) |
 
 ## Example

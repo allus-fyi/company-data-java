@@ -464,17 +464,39 @@ you call `.bytes()` or `.save(...)`:
 ```java
 BinaryHandle handle = conn.values().get("passport_scan").asBinary();  // no network yet
 
-byte[] data = handle.bytes();                          // GET the slot file → decrypt → file bytes
+byte[] data = handle.bytes();                          // GET the slot file → the file bytes
 long n      = handle.save("/tmp/passport.jpg");        // same, written to disk; returns bytes written
 String url  = handle.valueUrl();                        // the opaque slot-keyed URL it fetches from
+String sha  = handle.contentSha256();                   // X-Allus-Content-Sha256 of those bytes
+String ct   = handle.contentType();                     // what the bytes arrived as
 ```
 
-`.bytes()` GETs the slot-keyed file endpoint, unwraps the API's
-`{"encrypted": true, "value": <wrapper>}` envelope, decrypts with your service
-key, parses the inner JSON envelope (`{"full": "data:…"}` for photos,
-`{"file": "data:…"}` for documents) and base64-decodes the data URI into the file
-bytes. The result is cached on the handle, so repeated calls don't re-fetch.
+**#590 — the slot file endpoint has two 200 shapes, and which one you get is the
+person's choice, not yours.** If their source field is private you get
+`application/json` `{"encrypted": true, "value": <wrapper>}`, which the handle
+decrypts with your service key into a JSON file-envelope (`{"full": "data:…"}` for
+photos, `{"file": "data:…"}` for documents) and base64-decodes into the file bytes.
+If it is not private you get the file's own `Content-Type` and the body **is** the
+file — nothing to decrypt, and no service key needed. `.bytes()`/`.save(...)` return
+the file bytes either way, so **you never branch on it**. The person can flip that
+setting at any time and the API does not announce it in advance. The shape is
+decided on the response `Content-Type` only, never by sniffing the body.
+
+There is **no variant selection** — one slot has one byte sequence, and photos
+always resolve to the `full` representation.
+
+Every 200 carries `X-Allus-Content-Sha256`, the sha256 of exactly the bytes you
+received; `contentSha256()` hands it back so you can record it and later show your
+archived copy has not drifted. It is the platform's word, not a signature.
+
+The result is cached on the handle, so repeated calls don't re-fetch.
 `.save(...)` writes atomically (temp file → fsync → atomic move).
+
+A frozen (Share-once) answer is retained for 90 days. After that the endpoint
+returns **410** `company_data.file_expired` — an `ApiException` whose `details()`
+carry the `content_sha256` and `expired_at` of the file that was there, so a
+consumer still holding a copy can prove what it holds. The values map's entry for
+such a slot carries `expired: true` (plus `expired_at`) in `.raw()`.
 
 ### `Change(id, event, personId, slug?, value?, live?, at)`
 
@@ -952,10 +974,15 @@ AES-256-CBC) and is read via **BouncyCastle**. **The platform only ever holds
 ciphertext — it never sees your plaintext.**
 
 **Binary fetch.** A binary value is a lazy `BinaryHandle` over a slot-keyed
-`value_url`. On `.bytes()`/`.save()` it GETs that file endpoint, unwraps the
-`{"encrypted":true,"value":<wrapper>}` envelope, runs the same service-key decrypt
-to a JSON file-envelope, and base64-decodes its data URI to the file bytes.
-(Slot-keyed, never source-field-keyed.)
+`value_url`. On `.bytes()`/`.save()` it GETs that file endpoint and returns the
+file bytes for either of the route's two 200 shapes (#590): an
+`{"encrypted":true,"value":<wrapper>}` envelope gets the same service-key decrypt
+to a JSON file-envelope whose data URI base64-decodes to the bytes, while a
+plaintext answer's body already **is** the bytes. The two are told apart on the
+response `Content-Type` — a missing or JSON/XML one means the wrapper, anything
+else means the file — and never by sniffing the body, because mistaking a wrapper
+for bytes would silently write ciphertext to disk as if it were the document while
+the reverse fails loudly at the parse. (Slot-keyed, never source-field-keyed.)
 
 **The drain-on-fetch feed.** `processChanges` delegates to a `Pump` wired to a
 fetch closure (`GET /changes?limit=`, returning raw ciphertext events) and a

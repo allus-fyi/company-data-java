@@ -58,6 +58,14 @@ final class FakeTransport implements Transport {
         return new Response(status, body, headers);
     }
 
+    /**
+     * A response whose body is raw BYTES — #590's plaintext binary shape, where the body is the file
+     * itself and must survive byte-identically (no UTF-8 round trip).
+     */
+    static Response bytes(int status, byte[] body, Map<String, List<String>> headers) {
+        return new Response(status, body, headers);
+    }
+
     static Response tokenOk() {
         return json(200, "{\"access_token\":\"tok-123\",\"token_type\":\"Bearer\",\"expires_in\":3600}");
     }

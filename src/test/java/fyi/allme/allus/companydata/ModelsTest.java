@@ -52,7 +52,8 @@ class ModelsTest {
     }
 
     private static ModelDeps deps(Function<String, String> typeForSlug) {
-        return new ModelDeps(decryptValue, typeForSlug, vu -> Wrapper.of(vector("binary")));
+        return new ModelDeps(decryptValue, typeForSlug,
+            vu -> BinaryFetchResult.encrypted(Wrapper.of(vector("binary"))));
     }
 
     @SuppressWarnings("unchecked")
@@ -164,9 +165,11 @@ class ModelsTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> binary = (Map<String, Object>) vector.get("binary");
         Map<String, Boolean> captured = new LinkedHashMap<>();
-        Function<String, Wrapper> fetch = url -> {
+        // #590: the fetch callback classifies the response. Here it reports the ENCRYPTED shape —
+        // what the route serves when the person's source field is private.
+        Function<String, BinaryFetchResult> fetch = url -> {
             captured.put(url, true);
-            return Wrapper.of(((Map<String, Object>) binary).get("wrapper"));
+            return BinaryFetchResult.encrypted(Wrapper.of(((Map<String, Object>) binary).get("wrapper")));
         };
         ModelDeps deps = new ModelDeps(decryptValue, s -> "photo", fetch);
 
@@ -255,7 +258,8 @@ class ModelsTest {
     void changeFieldUpdatedBinaryIsLazyHandle() {
         @SuppressWarnings("unchecked")
         Map<String, Object> binary = (Map<String, Object>) vector.get("binary");
-        Function<String, Wrapper> fetch = url -> Wrapper.of(binary.get("wrapper"));
+        Function<String, BinaryFetchResult> fetch =
+            url -> BinaryFetchResult.encrypted(Wrapper.of(binary.get("wrapper")));
         ModelDeps deps = new ModelDeps(decryptValue, s -> "photo", fetch);
 
         Map<String, Object> ev = new LinkedHashMap<>();

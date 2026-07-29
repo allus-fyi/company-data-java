@@ -99,10 +99,10 @@ public final class Http {
         Transport.Response resp = transport.postForm(url, form, Map.of("Accept", "application/json"));
         int status = resp.status();
         if (status < 200 || status >= 300) {
-            String[] err = extractError(resp);
+            ErrorBody err = extractError(resp);
             throw new AuthException("token request rejected (HTTP " + status + ")"
-                + (err[0] != null ? " [" + err[0] + "]" : "")
-                + (err[1] != null ? ": " + err[1] : ""));
+                + (err.errorKey() != null ? " [" + err.errorKey() + "]" : "")
+                + (err.message() != null ? ": " + err.message() : ""));
         }
         Map<String, Object> body;
         try {
@@ -141,7 +141,7 @@ public final class Http {
     }
 
     public Object get(String path, Map<String, String> params) {
-        return request("GET", path, params, null, null, null, false);
+        return request("GET", path, params, null, null, null, false, false);
     }
 
     /**
@@ -151,40 +151,58 @@ public final class Http {
      * byte-identically. Auth/refresh/retry handling is identical to {@link #get}.
      */
     public byte[] getRaw(String path) {
-        return (byte[]) request("GET", path, null, null, null, null, true);
+        return (byte[]) request("GET", path, null, null, null, null, true, false);
+    }
+
+    /**
+     * GET {@code path} → the whole 2xx {@link Transport.Response} — status, headers AND raw body,
+     * with no parse.
+     *
+     * <p>#590: the company-facing binary file endpoints have two 200 shapes (a JSON wrapper for an
+     * encrypted answer, the raw file bytes for a plaintext one) that are told apart by
+     * {@code Content-Type}, and both carry an {@code X-Allus-Content-Sha256} digest header. Neither
+     * {@link #get} (which parses) nor {@link #getRaw} (which drops the headers) can express that, so
+     * this hands the caller the response itself — {@link #parseBody(Transport.Response)} does the
+     * format-aware parse afterwards when the caller decides it wants one. Auth/refresh/retry and
+     * error mapping are identical.
+     */
+    public Transport.Response getResponse(String path) {
+        return (Transport.Response) request("GET", path, null, null, null, null, false, true);
     }
 
     /** POST {@code path} with a JSON body → parsed body. */
     public Object post(String path, Object jsonBody) {
-        return request("POST", path, null, jsonBody, null, null, false);
+        return request("POST", path, null, jsonBody, null, null, false, false);
     }
 
     /** POST {@code path} with a raw byte body + content type → parsed body. */
     public Object post(String path, byte[] rawBody, String contentType) {
-        return request("POST", path, null, null, rawBody, contentType, false);
+        return request("POST", path, null, null, rawBody, contentType, false, false);
     }
 
     /** PUT {@code path} with a JSON body → parsed body. */
     public Object put(String path, Object jsonBody) {
-        return request("PUT", path, null, jsonBody, null, null, false);
+        return request("PUT", path, null, jsonBody, null, null, false, false);
     }
 
     /** DELETE {@code path} → parsed body. */
     public Object delete(String path) {
-        return request("DELETE", path, null, null, null, null, false);
+        return request("DELETE", path, null, null, null, null, false, false);
     }
 
     /**
      * The shared request loop for every verb. Adds the bearer token + an
      * {@code Accept} header matching {@code config.format()}, carries an optional JSON
      * or raw-bytes body, parses JSON or XML (unless {@code raw} is set, in which case the
-     * 2xx body BYTES are returned untouched — no charset decode), and maps non-2xx responses to the SDK
+     * 2xx body BYTES are returned untouched — no charset decode, or {@code wantResponse}, in which
+     * case the whole 2xx {@link Transport.Response} is), and maps non-2xx responses to the SDK
      * errors: 401 → one refresh-and-retry then {@link AuthException}; 429 → bounded
      * Retry-After backoff then {@link RateLimitException}; other non-2xx →
      * {@link ApiException}.
      */
     private Object request(String method, String path, Map<String, String> params,
-                           Object jsonBody, byte[] rawBody, String contentType, boolean raw) {
+                           Object jsonBody, byte[] rawBody, String contentType,
+                           boolean raw, boolean wantResponse) {
         String url = url(path);
         boolean wantsXml = "xml".equals(config.format());
         String accept = wantsXml ? "application/xml" : "application/json";
@@ -217,6 +235,9 @@ public final class Http {
             int status = resp.status();
 
             if (status >= 200 && status < 300) {
+                if (wantResponse) {
+                    return resp;
+                }
                 return raw ? resp.bodyBytes() : parseBody(resp, wantsXml);
             }
 
@@ -226,19 +247,19 @@ public final class Http {
                     bearer(true); // one refresh-and-retry
                     continue;
                 }
-                String[] err = extractError(resp);
+                ErrorBody err = extractError(resp);
                 throw new AuthException("unauthorized after token refresh"
-                    + (err[0] != null ? " [" + err[0] + "]" : "")
-                    + (err[1] != null ? ": " + err[1] : ""));
+                    + (err.errorKey() != null ? " [" + err.errorKey() + "]" : "")
+                    + (err.message() != null ? ": " + err.message() : ""));
             }
 
             if (status == 429) {
-                String[] err = extractError(resp);
+                ErrorBody err = extractError(resp);
                 // #481: a pending-cap 429 means the caller already holds the maximum concurrent
                 // 2FA challenges — a retry can never clear that, so surface it immediately as an
                 // ApiException instead of the blind Retry-After backoff every other 429 gets.
-                if ("twofa.pending_cap".equals(err[0])) {
-                    throw new ApiException(status, err[0], err[1]);
+                if ("twofa.pending_cap".equals(err.errorKey())) {
+                    throw new ApiException(status, err.errorKey(), err.message());
                 }
                 Double retryAfter = parseRetryAfter(resp);
                 if (retries429 < maxRetries429) {
@@ -246,11 +267,11 @@ public final class Http {
                     sleep.accept(backoffDelay(retryAfter, retries429));
                     continue;
                 }
-                throw new RateLimitException(retryAfter, err[0], err[1]);
+                throw new RateLimitException(retryAfter, err.errorKey(), err.message());
             }
 
-            String[] err = extractError(resp);
-            throw new ApiException(status, err[0], err[1]);
+            ErrorBody err = extractError(resp);
+            throw new ApiException(status, err.errorKey(), err.message(), err.details());
         }
     }
 
@@ -259,6 +280,15 @@ public final class Http {
             return path;
         }
         return apiUrl + (path.startsWith("/") ? "" : "/") + path;
+    }
+
+    /**
+     * Parse a response body with the configured {@code format} (json/xml) — the parse
+     * {@link #getResponse} deliberately skips, so a caller that had to inspect the headers first can
+     * still get the normal format-aware parse instead of hard-wiring JSON (#590).
+     */
+    public Object parseBody(Transport.Response resp) {
+        return parseBody(resp, "xml".equals(config.format()));
     }
 
     private Object parseBody(Transport.Response resp, boolean wantsXml) {
@@ -282,8 +312,16 @@ public final class Http {
 
     // ── helpers ───────────────────────────────────────────────────────────
 
-    /** Pull {@code error_key} + a message out of a non-2xx body (JSON or XML). */
-    private static String[] extractError(Transport.Response resp) {
+    /**
+     * What a non-2xx body yields: the platform key, the human message, and everything else.
+     *
+     * @param details the error body's remaining fields, verbatim
+     */
+    private record ErrorBody(String errorKey, String message, Map<String, Object> details) {
+    }
+
+    /** Pull {@code error_key} + a message + the remaining fields out of a non-2xx body (JSON or XML). */
+    private static ErrorBody extractError(Transport.Response resp) {
         Object body = null;
         String text = resp.body();
         if (text != null && !text.strip().isEmpty()) {
@@ -293,19 +331,29 @@ public final class Http {
                 try {
                     body = Xml.parse(text);
                 } catch (Exception xmlExc) {
-                    return new String[]{null, text};
+                    return new ErrorBody(null, text, Map.of());
                 }
             }
         }
         if (body instanceof Map<?, ?> m) {
             Object errorKey = m.get("error_key");
             Object message = m.get("error") != null ? m.get("error") : m.get("message");
-            return new String[]{
+            // #590: everything BESIDE the key and the message travels on as `details`, so a body
+            // that carries actionable data (a 410 file_expired's content_sha256 + expired_at) is
+            // readable without a bespoke exception type per response.
+            Map<String, Object> details = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                String key = String.valueOf(e.getKey());
+                if (!"error_key".equals(key) && !"error".equals(key) && !"message".equals(key)) {
+                    details.put(key, e.getValue());
+                }
+            }
+            return new ErrorBody(
                 errorKey != null ? String.valueOf(errorKey) : null,
-                message != null ? String.valueOf(message) : null
-            };
+                message != null ? String.valueOf(message) : null,
+                details);
         }
-        return new String[]{null, null};
+        return new ErrorBody(null, null, Map.of());
     }
 
     /** Parse the {@code Retry-After} header (delta-seconds form) → seconds, or null. */

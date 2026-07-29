@@ -1,5 +1,6 @@
 package fyi.allme.allus.companydata.internal;
 
+import fyi.allme.allus.companydata.BinaryFetchResult;
 import fyi.allme.allus.companydata.BinaryHandle;
 import fyi.allme.allus.companydata.DecryptException;
 import fyi.allme.allus.companydata.Wrapper;
@@ -17,12 +18,13 @@ import java.util.function.Function;
  *
  * @param decryptValue raw ciphertext wrapper (Map or JSON string or {@link Wrapper}) → plaintext string
  * @param typeForSlug  slug → the request field's type (e.g. "email", "photo"), or null
- * @param binaryFetch  value_url → the inner {@link Wrapper} (the client does the GET + envelope unwrap); may be null
+ * @param binaryFetch  value_url → a {@link BinaryFetchResult} saying which of the route's two 200
+ *                     shapes arrived (the client does the GET and classifies it); may be null
  */
 public record ModelDeps(
     Function<Object, String> decryptValue,
     Function<String, String> typeForSlug,
-    Function<String, Wrapper> binaryFetch
+    Function<String, BinaryFetchResult> binaryFetch
 ) {
     /** Field types whose decrypted plaintext is a JSON object → a parsed Map. */
     public static final List<String> STRUCTURED_TYPES = List.of("address", "bank", "creditcard");

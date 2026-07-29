@@ -75,21 +75,45 @@ A lazy handle for a binary value. No network or decryption happens at constructi
 ```java
 class BinaryHandle {
     String valueUrl();             // the opaque slot-keyed file URL (read-only; may be null)
-    byte[] bytes();                // fetch (if needed) → decrypt → decoded primary file bytes
+    byte[] bytes();                // fetch (if needed) → the primary file bytes, either shape
     long   save(Path path);        // write bytes() to path atomically; returns bytes written
     long   save(String path);
+    String contentSha256();        // X-Allus-Content-Sha256 of the fetched bytes (null until fetched)
+    String contentType();          // the Content-Type they arrived with (null until fetched)
 }
 ```
 
-On first `.bytes()`/`.save()`:
+#590 — the slot file endpoint has **two** 200 shapes, chosen by whether the
+**person's** source field is private. The company cannot predict or control which
+arrives, and `.bytes()`/`.save()` return the file bytes for both, so you never
+branch on it:
 
-1. GET the slot-keyed file endpoint → the API serves `{"encrypted": true, "value": <wrapper>}`.
-2. Decrypt the inner `{"_enc":1,…}` wrapper with the service key → a JSON file-envelope string (`{"full": "data:…", "thumb": …}` for photos, `{"file": "data:…", …}` for documents).
-3. Base64-decode the primary data URI (`full` for photos, `file` for documents) → the file bytes. Cached on the handle (repeated calls don't re-fetch).
+| Person's source field | Response | What the handle does |
+|---|---|---|
+| private | `application/json`, `{"encrypted": true, "value": <wrapper>}` | Decrypt the inner `{"_enc":1,…}` wrapper with the service key → a JSON file-envelope string (`{"full": "data:…", "thumb": …}` for photos, `{"file": "data:…", …}` for documents) → base64-decode the primary data URI (`full` for photos, `file` for documents). |
+| not private | the file's own `Content-Type` (`image/jpeg`, `application/pdf`, …), body **is** the file | Serve the body as-is. Nothing to decrypt; no service key needed. |
 
+The shape is decided on the response `Content-Type` alone — a missing or
+JSON/XML one means the wrapper, anything else means the file — and never by
+sniffing the body. There is no variant selection: one slot has one byte sequence,
+and photos always resolve to `full`.
+
+Both shapes carry `X-Allus-Content-Sha256`, the sha256 of exactly the bytes
+returned; `contentSha256()` hands it back. It is the platform's word about its own
+record, not a signature you can show a third party.
+
+The fetched result is cached on the handle (repeated calls don't re-fetch).
 `.save(...)` writes crash-safely (temp file → `FileChannel.force(true)` fsync →
 `Files.move(ATOMIC_MOVE)`). An unanswered binary slot yields an empty handle;
 calling `.bytes()` on it throws `DecryptException`.
+
+A frozen (Share-once) answer is retained for 90 days; after that the endpoint
+returns **410 `company_data.file_expired`** as an `ApiException` whose `details()`
+carry the `content_sha256` and `expired_at` of the file that was there (see
+[errors.md](errors.md)). Binary entries in a values map may carry
+`content_sha256`, and an expired one `expired: true` + `expired_at`, readable via
+`Value.raw()`; a `field_deleted` change may likewise carry `content_sha256` and
+`expired: true` in `Change.raw()`.
 
 ## `Change`
 
