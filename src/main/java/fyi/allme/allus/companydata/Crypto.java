@@ -33,8 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Decryption core — byte-identical to the platform's Web Crypto encryption and to
- * every other SDK port.
+ * Decryption core, matching the pinned hybrid-ciphertext wrapper this client must decrypt exactly.
  *
  * <p>Each person value arrives as a hybrid ciphertext wrapper, encrypted <em>for
  * the service public key</em>; the SDK decrypts with the service private key:
@@ -330,7 +329,7 @@ public final class Crypto {
     }
 
     /**
-     * #311 verified fields: true iff sha256(salt ‖ plaintext) == expectedHash (hex). Consumers
+     * Verified fields: true iff sha256(salt ‖ plaintext) == expectedHash (hex). Consumers
      * recompute this from the plaintext they just decrypted and trust the verified flag only on a match.
      */
     public static boolean hashMatches(String salt, String expectedHash, String plaintext) {

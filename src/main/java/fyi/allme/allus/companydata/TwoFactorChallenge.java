@@ -5,7 +5,7 @@ import fyi.allme.allus.companydata.internal.Parse;
 import java.util.Map;
 
 /**
- * #436 2FA-by-allme — a login-approval challenge returned by {@link TwoFactorClient#challenge} (spec §3).
+ * 2FA-by-allme — a login-approval challenge returned by {@link TwoFactorClient#challenge} (spec §3).
  *
  * <p>{@link #matchingDigits()} is present only when the service has number matching on — the two digits to
  * DISPLAY on your login page. The person types them back into the allme app; the SERVER adjudicates them

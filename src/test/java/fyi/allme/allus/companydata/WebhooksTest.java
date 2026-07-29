@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Webhook receiver-helper tests. Mirrors the Python reference's test_webhooks. */
+/** Webhook receiver-helper tests. */
 class WebhooksTest {
     private static final String SECRET = "wh_secret_abc123";
     private static final String WEBHOOK_ID = "wh-1";

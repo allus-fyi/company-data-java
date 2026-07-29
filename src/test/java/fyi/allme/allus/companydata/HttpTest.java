@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** HTTP/auth layer tests. Mirrors the Python reference's test_http. */
+/** HTTP/auth layer tests. */
 class HttpTest {
 
     private static Config config(String format) {
@@ -164,7 +164,7 @@ class HttpTest {
 
     @Test
     void pendingCap429SurfacesImmediatelyWithoutRetry() {
-        // #481: a twofa.pending_cap 429 can never be cleared by a retry — it must surface at once
+        // A twofa.pending_cap 429 can never be cleared by a retry — it must surface at once
         // as ApiException, NOT go through the Retry-After backoff (which every other 429 gets).
         FakeTransport t = new FakeTransport();
         t.postResponses.add(FakeTransport.tokenOk());

@@ -5,7 +5,7 @@ import fyi.allme.allus.companydata.internal.Parse;
 import java.util.Map;
 
 /**
- * #436 2FA-by-allme — the outcome of {@link TwoFactorClient#result} (spec §3). The poll is the record: the
+ * 2FA-by-allme — the outcome of {@link TwoFactorClient#result} (spec §3). The poll is the record: the
  * first read of a terminal state delivers it and burns it (a later read is {@code gone}).
  */
 public record TwoFactorResult(

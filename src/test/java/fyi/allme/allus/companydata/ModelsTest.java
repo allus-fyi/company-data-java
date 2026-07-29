@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Output-model tests. Mirrors the Python reference's test_models. */
+/** Output-model tests. */
 class ModelsTest {
     private static Map<String, Object> vector;
     private static RSAPrivateKey privateKey;
@@ -165,7 +165,7 @@ class ModelsTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> binary = (Map<String, Object>) vector.get("binary");
         Map<String, Boolean> captured = new LinkedHashMap<>();
-        // #590: the fetch callback classifies the response. Here it reports the ENCRYPTED shape —
+        // The fetch callback classifies the response. Here it reports the ENCRYPTED shape —
         // what the route serves when the person's source field is private.
         Function<String, BinaryFetchResult> fetch = url -> {
             captured.put(url, true);
@@ -376,7 +376,7 @@ class ModelsTest {
         assertNull(changes.get(1).shareCode());
     }
 
-    /** B2B (#163): a request row carries audience; absent -> null. */
+    /** B2B: a request row carries audience; absent -> null. */
     @Test
     void requestFieldIncludesAudience() {
         Map<String, Object> billing = new LinkedHashMap<>();
@@ -393,7 +393,7 @@ class ModelsTest {
         assertNull(fields.get(1).audience());
     }
 
-    /** B2B (#163): a change event carries customer_type; absent -> null. */
+    /** B2B: a change event carries customer_type; absent -> null. */
     @Test
     void changeIncludesCustomerType() {
         ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
@@ -413,7 +413,7 @@ class ModelsTest {
         assertNull(changes.get(1).customerType());
     }
 
-    /** B2B (#163): a connection carries customer_type + share_code (both nullable). */
+    /** B2B: a connection carries customer_type + share_code (both nullable). */
     @Test
     void connectionIncludesCustomerTypeAndShareCode() {
         ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);

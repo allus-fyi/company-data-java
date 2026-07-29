@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Client-facade tests. Mirrors the Python reference's test_client. */
+/** Client-facade tests. */
 class ClientTest {
     private static Map<String, Object> vector;
     private static RSAPrivateKey privateKey;
@@ -285,7 +285,7 @@ class ClientTest {
     }
 
     /**
-     * #590 — a person whose source field is NOT private makes the same slot serve the file's own
+     * A person whose source field is NOT private makes the same slot serve the file's own
      * Content-Type and the raw bytes. The handle serves them as-is (no decrypt, no service key
      * needed) and exposes the platform's digest header.
      */
@@ -320,7 +320,7 @@ class ClientTest {
         assertEquals(sha256(fileBytes), handle.contentSha256());
     }
 
-    /** #590 — a 410 file_expired surfaces the digest and the expiry date through ApiException.details(). */
+    /** A 410 file_expired surfaces the digest and the expiry date through ApiException.details(). */
     @Test
     void binaryHandleExpiredAnswerCarriesDigest(@TempDir Path tmp) throws Exception {
         String page = fyi.allme.allus.companydata.internal.Json.write(Map.of(

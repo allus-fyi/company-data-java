@@ -63,7 +63,7 @@ public final class Client {
 
     private final Config config;
     private final Http http;
-    /** #436 2FA-by-allme — the relying-party challenge API, lazily built (see {@link #twoFactor()}). */
+    /** 2FA-by-allme — the relying-party challenge API, lazily built (see {@link #twoFactor()}). */
     private TwoFactorClient twoFactor;
     private final Logger log;
     private final java.util.function.DoubleConsumer sleep;
@@ -79,16 +79,15 @@ public final class Client {
     // encryption. A public key is immutable + not a secret (fetched live, never configured).
     private final Map<String, java.security.interfaces.RSAPublicKey> pubkeyCache = new LinkedHashMap<>();
     /**
-     * #344 review pass 2: {@code LinkedHashMap} is not thread-safe, and {@link #invalidatePublicKey}
+     * {@code LinkedHashMap} is not thread-safe, and {@link #invalidatePublicKey}
      * is documented as something a WEBHOOK consumer calls from its own thread — concurrently with an
      * encryption that reads or populates this map. Every access goes through this monitor. The lock
      * is never held across the HTTP fetch, or concurrent encryptions would serialise behind one
-     * round-trip. (The Go SDK's equivalent race is what the review caught; the same reasoning
-     * applies verbatim here.)
+     * round-trip.
      */
     private final Object pubkeyLock = new Object();
     /**
-     * #344 review pass 3: a per-key GENERATION counter, bumped by every invalidation.
+     * A per-key GENERATION counter, bumped by every invalidation.
      *
      * <p>Locking the map alone is not enough. The fetch path is check (locked) → release → HTTP →
      * store (locked), so an {@code invalidatePublicKey} landing between the release and the store
@@ -160,7 +159,7 @@ public final class Client {
     /**
      * Fetch a company-facing binary file endpoint and classify its response.
      *
-     * <p>#590 — the endpoint has TWO 200 shapes and which one arrives is not the company's to
+     * <p>The endpoint has TWO 200 shapes and which one arrives is not the company's to
      * predict: a person whose source field is PRIVATE yields {@code application/json}
      * {@code {"encrypted":true,"value":<wrapper>}}, a person whose field is not yields the file's
      * own Content-Type and the bytes themselves. The decision is
@@ -196,7 +195,7 @@ public final class Client {
 
     // ── definitions ────────────────────────────────────────────────────────────
 
-    /** #436 2FA-by-allme — the relying-party challenge API ({@code twoFactor().challenge} / {@code .result}). */
+    /** 2FA-by-allme — the relying-party challenge API ({@code twoFactor().challenge} / {@code .result}). */
     public TwoFactorClient twoFactor() {
         if (twoFactor == null) {
             twoFactor = new TwoFactorClient(http);
@@ -399,7 +398,7 @@ public final class Client {
     }
 
     /**
-     * #344 — drop a person's cached RSA public key, by share code.
+     * Drop a person's cached RSA public key, by share code.
      *
      * <p>A public key is immutable, so caching one is safe until the person rotates it. Persons
      * learn about a rotation from a silent push; a SERVICE receives no pushes at all, so without a
@@ -419,9 +418,9 @@ public final class Client {
     }
 
     private Change decryptChange(Map<String, Object> event) {
-        // #344: the feed is a service's only rotation signal. Deliberately eventual — nothing
+        // The feed is a service's only rotation signal. Deliberately eventual — nothing
         // rejects a document encrypted to a stale key, so a window remains until this is drained.
-        // #344: the pull feed names it `event`; a raw webhook body names it `action` (and on
+        // The pull feed names it `event`; a raw webhook body names it `action` (and on
         // document rows `action` carries signed|accepted|cancelled instead) — so match either key.
         if ("key_rotated".equals(event.get("event")) || "key_rotated".equals(event.get("action"))) {
             Object shareCode = event.get("share_code");
@@ -705,7 +704,7 @@ public final class Client {
     }
 
     /**
-     * #491 gap 2: download a document's file BYTES. {@link #document} returns metadata only. This
+     * Download a document's file BYTES. {@link #document} returns metadata only. This
      * GETs {@code /documents/{id}/file} and branches on the document's storage mode (server
      * contract):
      * <ul>
@@ -747,7 +746,7 @@ public final class Client {
         return raw; // broadcast / plaintext bytes, returned byte-identically
     }
 
-    /** {@code decoded['encrypted'] ?? false} truthiness, matching the PHP reference's loose check. */
+    /** {@code decoded['encrypted'] ?? false} truthiness, matching the platform's loose truthiness convention for this flag. */
     private static boolean isTruthy(Object value) {
         if (value instanceof Boolean b) {
             return b;
@@ -865,7 +864,7 @@ public final class Client {
     }
 
     /**
-     * #491 gap 1: a completed run's DECRYPTED answers as {@code {slug: plaintext}}. Decrypts the
+     * A completed run's DECRYPTED answers as {@code {slug: plaintext}}. Decrypts the
      * company's service-key answer copies of an already-fetched run — the public accessor for a
      * finished run's answers, since the private {@code decryptRunAnswers} it wraps is otherwise
      * reached only inside {@link #processFlowRun}, which returns an already-completed run untouched.
@@ -877,7 +876,7 @@ public final class Client {
     }
 
     /**
-     * #491 gap 2: download the company's OWN copy of a run's generated flow contract — the PLAINTEXT
+     * Download the company's OWN copy of a run's generated flow contract — the PLAINTEXT
      * file bytes. GETs {@code /flow-runs/{runId}/document/file}, which serves the company-party copy
      * encrypted to the SERVICE key (unlike {@link #documentFile}'s recipient-targeted copy), so the
      * same {@link BinaryHandle} the slot-file download uses decrypts it → the
@@ -890,7 +889,7 @@ public final class Client {
     }
 
     /**
-     * #491 gap 3: this client's OWN identity from {@code GET /api/company-data/whoami}. The COMPANY
+     * This client's OWN identity from {@code GET /api/company-data/whoami}. The COMPANY
      * party of a {@link #triggerFlowRun} binding must bind to {@link Identity#companyUserId()} (the
      * person party's user_id comes from the connection), so without this the company-side binding was
      * unconstructible through the SDK.
@@ -983,7 +982,7 @@ public final class Client {
         full.putAll(fill);
         java.security.interfaces.RSAPublicKey svcPub = servicePublicKey();
 
-        // #302: validate each freshly-typed answer against its field type from the pinned
+        // Validate each freshly-typed answer against its field type from the pinned
         // definition, BEFORE encryption. Skip when the type can't be resolved.
         for (Map.Entry<String, Object> e : fill.entrySet()) {
             String ft = fieldTypeForSlug(run.definition(), e.getKey());
@@ -1262,7 +1261,7 @@ public final class Client {
      * Resolve a field element's {@code field_type} from the pinned flow definition by scanning
      * every node's elements for a {@code kind:"field"} element with the given slug. Returns null
      * when the slug is not a field element (or elements are absent) — callers then SKIP validation
-     * rather than invent a type (#302).
+     * rather than invent a type.
      */
     @SuppressWarnings("unchecked")
     private static String fieldTypeForSlug(Map<String, Object> definition, String slug) {

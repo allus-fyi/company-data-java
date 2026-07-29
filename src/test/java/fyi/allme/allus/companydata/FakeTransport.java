@@ -9,9 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Records calls and replays scripted responses (FIFO) per method — mirrors the
- * Python tests' {@code FakeSession}. Lets the {@code Http} auth/error/backoff logic
- * be exercised without a live API.
+ * Records calls and replays scripted responses (FIFO) per method. Lets the {@code Http}
+ * auth/error/backoff logic be exercised without a live API.
  */
 final class FakeTransport implements Transport {
     final Deque<Response> postResponses = new ArrayDeque<>();
@@ -59,7 +58,7 @@ final class FakeTransport implements Transport {
     }
 
     /**
-     * A response whose body is raw BYTES — #590's plaintext binary shape, where the body is the file
+     * A response whose body is raw BYTES — the plaintext binary shape, where the body is the file
      * itself and must survive byte-identically (no UTF-8 round trip).
      */
     static Response bytes(int status, byte[] body, Map<String, List<String>> headers) {

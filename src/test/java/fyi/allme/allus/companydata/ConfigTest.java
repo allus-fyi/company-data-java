@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Config loader tests. Mirrors the Python reference's test_config. */
+/** Config loader tests. */
 class ConfigTest {
 
     private static Path write(Path dir, Map<String, Object> data) throws Exception {

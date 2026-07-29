@@ -92,7 +92,7 @@ public final class FlowCondition {
                 return inList(target, val);
             case "nin":
                 return !inList(target, val);
-            // #102 substring ops (text): contains needs an answer (like in); not_contains is
+            // Substring ops (text): contains needs an answer (like in); not_contains is
             // true when unanswered (like nin). Case-sensitive; empty needle counts as contained.
             case "contains":
                 return answered(val) && str(val).contains(str(target));
@@ -239,7 +239,7 @@ public final class FlowCondition {
         }
     }
 
-    // ── Flow constants (computed variables) — issue #79. Pure; extends the evaluator above. ──
+    // ── Flow constants (computed variables). Pure; extends the evaluator above. ──
     // Reuses the class-local helpers toNum / str (=stringOf) / answered (=isAnswered) / evaluate
     // (=evaluateCondition) WITHOUT modifying them, so the 27-case condition vector stays byte-identical.
     // A "constant" is a parsed {key, label, result_type, expr} map. computeConstants materialises each

@@ -7,8 +7,7 @@ import java.util.Map;
 /**
  * The minimal HTTP transport seam the {@code Http} layer talks to. The default
  * implementation wraps {@link java.net.http.HttpClient}; tests inject a fake so the
- * auth / error / backoff logic is exercised without a live API. (Mirrors the
- * Python reference's injectable {@code requests.Session}.)
+ * auth / error / backoff logic is exercised without a live API.
  */
 public interface Transport {
 

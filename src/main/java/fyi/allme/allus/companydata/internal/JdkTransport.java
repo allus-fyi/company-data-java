@@ -78,7 +78,8 @@ public final class JdkTransport implements Transport {
         try {
             // Receive raw bytes (NOT ofString) so a binary body — a broadcast document's
             // PDF/image — reaches Http/Client byte-identically; the text paths decode via
-            // Response#body(). #491 review-pass-1: ofString corrupted non-UTF-8 downloads.
+            // Response#body(). ofString corrupts non-UTF-8 downloads, which is why byte-array
+            // reception is used here instead.
             HttpResponse<byte[]> resp = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
             return new Response(resp.statusCode(), resp.body(), resp.headers().map());
         } catch (IOException exc) {

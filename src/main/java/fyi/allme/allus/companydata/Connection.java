@@ -19,7 +19,7 @@ public record Connection(
     String displayName,
     OffsetDateTime connectedAt,
     Map<String, Value> values,
-    /** The connected customer's TYPE: "person"|"company" (B2B, #163); null on older API. */
+    /** The connected customer's TYPE: "person"|"company" (B2B); null on older API. */
     String customerType,
     /** The customer's profile share code (previously only via {@code raw}); null when absent. */
     String shareCode,

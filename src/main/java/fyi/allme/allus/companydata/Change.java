@@ -26,7 +26,7 @@ public record Change(
     String event,
     String personId,
     String shareCode,
-    /** The customer's TYPE: "person"|"company" (B2B, #163); null on older API. */
+    /** The customer's TYPE: "person"|"company" (B2B); null on older API. */
     String customerType,
     String slug,
     Object value,
@@ -40,8 +40,8 @@ public record Change(
     String signedAt,      // set on a signature: ISO timestamp the signature was recorded
     String cancelEffectiveDate, // set on a cancelled document_status_changed: ISO date the cancellation takes effect
     String requestId, // set on connection_request_accepted | connection_request_rejected
-    String publicKeySha256, // #344: set on key_rotated — SHA-256 fingerprint of the person's NEW public key
-    boolean verified, // #311: true iff a field_updated value is verified (hash matches the decrypted plaintext)
+    String publicKeySha256, // set on key_rotated — SHA-256 fingerprint of the person's NEW public key
+    boolean verified, // true iff a field_updated value is verified (hash matches the decrypted plaintext)
     OffsetDateTime at,
     Map<String, Object> raw
 ) {
@@ -63,7 +63,7 @@ public record Change(
         // document_status_changed carries a document_id + new status (+ a contract action; no slot/value).
         String documentId = Parse.str(obj.get("document_id"));
         boolean isDocStatus = "document_status_changed".equals(event);
-        // #436: 2fa_challenge_completed carries the outcome in status (approved|denied|revoked); its
+        // 2fa_challenge_completed carries the outcome in status (approved|denied|revoked); its
         // challenge_id/completed_at stay in raw. The poll is the record (spec §3).
         String status = (isDocStatus || "2fa_challenge_completed".equals(event)) ? Parse.str(obj.get("status")) : null;
         String action = isDocStatus ? Parse.str(obj.get("action")) : null;
@@ -78,7 +78,7 @@ public record Change(
             || "connection_request_rejected".equals(event))
             ? Parse.str(obj.get("request_id")) : null;
 
-        // #344: key_rotated carries the fingerprint of the person's NEW public key (no slot/value).
+        // key_rotated carries the fingerprint of the person's NEW public key (no slot/value).
         String publicKeySha256 = "key_rotated".equals(event)
             ? Parse.str(obj.get("public_key_sha256")) : null;
 

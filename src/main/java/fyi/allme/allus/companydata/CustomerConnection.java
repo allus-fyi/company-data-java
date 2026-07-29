@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * One company↔company connection from the customer's side (b2b, #168).
+ * One company↔company connection from the customer's side (b2b).
  *
  * <p>A thin wrapper over the raw API dict; the plaintext fields (company identity, shared values,
  * company profile) are exposed directly and {@link #raw()} is always kept.

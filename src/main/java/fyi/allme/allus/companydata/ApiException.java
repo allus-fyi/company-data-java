@@ -23,11 +23,11 @@ public class ApiException extends RuntimeException {
     }
 
     /**
-     * #590 added the first response that carries actionable data BESIDE the key: a 410
-     * {@code company_data.file_expired} returns the expired answer's {@code content_sha256} and
-     * {@code expired_at}, so a consumer can record that its archived copy is now the only one and
-     * still prove what it holds. Generic rather than a bespoke subclass — every error body's extra
-     * fields become reachable, and no future one needs a new exception type to be readable.
+     * A 410 {@code company_data.file_expired} response carries actionable data BESIDE the key: it
+     * returns the expired answer's {@code content_sha256} and {@code expired_at}, so a consumer can
+     * record that its archived copy is now the only one and still prove what it holds. Generic rather
+     * than a bespoke subclass — every error body's extra fields become reachable, and no future one
+     * needs a new exception type to be readable.
      *
      * @param details the error body's remaining fields, verbatim.
      */
@@ -70,7 +70,7 @@ public class ApiException extends RuntimeException {
     /**
      * The error body's fields other than {@code error_key} / {@code error} / {@code message},
      * verbatim — empty when the body carried none. A 410 {@code company_data.file_expired} puts
-     * {@code content_sha256} and {@code expired_at} here (#590).
+     * {@code content_sha256} and {@code expired_at} here.
      */
     public Map<String, Object> details() {
         return details;

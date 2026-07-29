@@ -110,7 +110,7 @@ public final class Server {
                 serveStatic(ex, path);
             }
         } catch (Throwable t) {
-            // The reason rides in `error`, the only key the suite renders (#583).
+            // The reason rides in `error`, the only key the suite renders.
             Http.failure(ex, 500, "server_error", Http.reasonOf(t));
         } finally {
             ex.close();

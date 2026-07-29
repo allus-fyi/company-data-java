@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** "Sign in with allme" RP OAuth client tests (#195). Ports test_oauth.py. */
+/** "Sign in with allme" RP OAuth client tests. */
 class OAuthClientTest {
 
     private static Config idwCfg() {
@@ -93,7 +93,7 @@ class OAuthClientTest {
     @SuppressWarnings("unchecked")
     void authorizeUrlClaimValidation() throws Exception {
         OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
-        // #498: every claim carries a mandatory `name` — the identity everything downstream is keyed by.
+        // Every claim carries a mandatory `name` — the identity everything downstream is keyed by.
         List<OAuthClient.Claim> claims = List.of(
             new OAuthClient.Claim("email", "email", "email_personal", false, false, null),
             new OAuthClient.Claim("avatar", "photo"),
@@ -111,7 +111,7 @@ class OAuthClientTest {
         assertEquals(Boolean.TRUE, ((Map<String, Object>) parsed.get(1)).get("required"));
     }
 
-    /** #498 §2: a nameless claim, and two sharing a name, are refused at the call that made them. */
+    /** A nameless claim, and two sharing a name, are refused at the call that made them. */
     @Test
     void authorizeUrlClaimNameRequired() {
         OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
@@ -123,7 +123,7 @@ class OAuthClientTest {
                 new OAuthClient.Claim("email", "text")))));
     }
 
-    /** #498 §3: `verified` travels on the wire, so an RP can demand a #311-attested answer. */
+    /** `verified` travels on the wire, so an RP can demand a cryptographically-attested answer. */
     @Test
     @SuppressWarnings("unchecked")
     void authorizeUrlClaimVerified() throws Exception {
@@ -166,7 +166,7 @@ class OAuthClientTest {
         assertEquals("authorization_code", t.posts.get(0).get("grant_type"));
         assertEquals("V", t.posts.get(0).get("code_verifier"));
         Map<String, Object> info = c.userinfo("AT");
-        // #498 §5: `sub` IS the share code (byte-identical to the id_token's); display_name is gone.
+        // `sub` IS the share code (byte-identical to the id_token's); display_name is gone.
         assertEquals("AB12CD", info.get("sub"));
         assertEquals(info.get("share_code"), info.get("sub"));
         assertFalse(info.containsKey("display_name"));
@@ -197,7 +197,7 @@ class OAuthClientTest {
         assertTrue(res.twoFactor());
         assertEquals("AB12CD", res.user().get("sub"));
         assertEquals(text.get("plaintext"), res.values().get("email_personal"));
-        // #498 §3.1a: no `values_attestation` on the wire → "not attested", never "wrong".
+        // No `values_attestation` on the wire → "not attested", never "wrong".
         assertTrue(res.attestations().isEmpty());
     }
 
@@ -222,7 +222,7 @@ class OAuthClientTest {
         assertEquals(410, ex.status());
     }
 
-    // ── #481: 2fa_enroll mode + detached enrollment poll delivery ──────────────
+    // ── 2fa_enroll mode + detached enrollment poll delivery ─────────────────────
 
     @Test
     void authorizeUrlAcceptsEnrollMode() {
@@ -235,7 +235,7 @@ class OAuthClientTest {
 
     @Test
     void pollResultPendingThenEnrolled() {
-        // #481: a detached 2fa_enroll delivers {enrolled: true, state}, NOT a code. pollResult must
+        // A detached 2fa_enroll delivers {enrolled: true, state}, NOT a code. pollResult must
         // return on the `enrolled` sentinel — otherwise it consumes the one-shot result and times out.
         FakeTransport t = new FakeTransport();
         t.postResponses.add(FakeTransport.json(202, ""));

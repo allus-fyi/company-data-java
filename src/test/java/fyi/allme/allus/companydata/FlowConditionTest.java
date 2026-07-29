@@ -14,8 +14,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * FlowConditionEvaluator parity — every case in the shared vector must pass. The same vector pins
- * the PHP reference + the python/ts/go/csharp/iOS/Android ports.
+ * FlowConditionEvaluator parity — every case in the pinned shared vector must pass.
  */
 class FlowConditionTest {
 

@@ -19,7 +19,7 @@ public record RequestField(
     String type,
     boolean oneTime,
     boolean mandatory,
-    /** Which customer TYPE this row applies to: "person"|"company"|"both" (B2B, #163); null on older API. */
+    /** Which customer TYPE this row applies to: "person"|"company"|"both" (B2B); null on older API. */
     String audience,
     Map<String, Object> raw
 ) {

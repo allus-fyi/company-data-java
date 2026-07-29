@@ -15,8 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * computeConstants parity — every case in the shared constants vector must pass. The same vector
- * pins the JS reference + the python/ts/go/csharp/php/iOS/Android ports.
+ * computeConstants parity — every case in the pinned shared constants vector must pass.
  */
 class FlowConstantsTest {
 

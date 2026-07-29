@@ -36,13 +36,13 @@ public final class Config {
     private final String clientId;
     private final String clientSecret;
     private final String servicePrivateKey;   // path to the OpenSSL-encrypted PKCS#8 PEM
-    private final String customerClientId;     // #168 customer role: the acct_* client id
-    private final String customerClientSecret; // #168 customer role: the acct_* client secret
+    private final String customerClientId;     // customer role: the acct_* client id
+    private final String customerClientSecret; // customer role: the acct_* client secret
     private final String keyPassphrase;        // decrypts the service PEM in memory
 
     private final String accountPrivateKey;    // optional — only for encrypt_payload webhooks
     private final String accountPassphrase;
-    // "Sign in with allme" idw role (#195). oauthPrivateKey + oauthKeyPassphrase are needed only to
+    // "Sign in with allme" idw role. oauthPrivateKey + oauthKeyPassphrase are needed only to
     // decrypt one_time claim values (config-only key handling).
     private final String oauthClientId;
     private final String oauthRedirectUri;
@@ -119,7 +119,7 @@ public final class Config {
         return build(Map.of());
     }
 
-    /** Load a CUSTOMER-role config (#168) from a JSON file — requires the acct_* pair
+    /** Load a CUSTOMER-role config from a JSON file — requires the acct_* pair
      *  + account key, not the service PEM. Env vars override file values. */
     public static Config fromCustomerFile(String path) {
         Map<String, Object> data;
@@ -141,7 +141,7 @@ public final class Config {
         return doBuild(Map.of(), System::getenv, "customer");
     }
 
-    /** Load an IDW-role config (#195, "Sign in with allme") from a JSON file — requires the
+    /** Load an IDW-role config ("Sign in with allme") from a JSON file — requires the
      *  oauth_client_id + oauth_redirect_uri. Env vars override file values. */
     public static Config fromIdwFile(String path) {
         Map<String, Object> data;
@@ -175,7 +175,7 @@ public final class Config {
         return (v != null && !v.isEmpty()) ? v : null;
     }
 
-    // Package-private: mirrors the Python reference's Config._build(data) (used by tests).
+    // Package-private: the SERVICE-role config builder (used by tests).
     static Config build(Map<String, Object> data) {
         return build(data, System::getenv);
     }
@@ -378,7 +378,7 @@ public final class Config {
         return customerClientSecret;
     }
 
-    /** #195 idw role: the idw_* app client id. */
+    /** idw role: the idw_* app client id. */
     public String oauthClientId() {
         return oauthClientId;
     }
@@ -399,7 +399,7 @@ public final class Config {
         return oauthKeyPassphrase;
     }
 
-    /** #168: an http-facing copy whose clientId/secret are the customer acct_* pair. */
+    /** An http-facing copy whose clientId/secret are the customer acct_* pair. */
     Config toCustomerHttpConfig() {
         return new Config(apiUrl, customerClientId, customerClientSecret, null, null,
             customerClientId, customerClientSecret,

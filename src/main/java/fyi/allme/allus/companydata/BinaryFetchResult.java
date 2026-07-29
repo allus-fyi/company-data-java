@@ -6,7 +6,7 @@ import java.util.Locale;
  * One response from a company-facing binary file endpoint, in the shape a
  * {@link BinaryHandle} needs.
  *
- * <p>#590 — the route has TWO 200 shapes and the company cannot predict which it
+ * <p>The route has TWO 200 shapes and the company cannot predict which it
  * will get, because the answer depends on whether the person's source field is
  * private, which is theirs to change:
  *
@@ -63,7 +63,7 @@ public record BinaryFetchResult(
      * Whether a binary file response carries the file bytes themselves rather than the JSON wrapper
      * envelope — decided on {@code Content-Type} alone.
      *
-     * <p>#590: plaintext is claimed ONLY on a Content-Type that positively says so. A missing or
+     * <p>Plaintext is claimed ONLY on a Content-Type that positively says so. A missing or
      * empty header falls through to the JSON path — the historical shape — because the two failure
      * modes are not symmetrical: mistaking a wrapper for file bytes writes the ciphertext envelope
      * to disk as if it were the document and nothing complains, while mistaking bytes for a wrapper

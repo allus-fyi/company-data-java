@@ -17,8 +17,7 @@ import java.util.Map;
 /**
  * Test-only encryption helpers — encrypt a plaintext into a platform wrapper with
  * a known public key, so model/client/webhook tests can build values that decrypt
- * back to known content through the SAME crypto core. Mirrors the Python tests'
- * {@code encrypt_for_key} / {@code _wrap_to_account_key} fixtures.
+ * back to known content through the SAME crypto core.
  */
 final class TestCrypto {
     private static final SecureRandom RNG = new SecureRandom();

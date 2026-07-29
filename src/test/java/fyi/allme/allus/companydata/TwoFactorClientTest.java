@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/** #481 additions to the 2FA client: waitForResult (the base challenge/result client landed via #436). */
+/** The 2FA client's waitForResult, layered on the base challenge/result client. */
 class TwoFactorClientTest {
 
     private static Config config() {

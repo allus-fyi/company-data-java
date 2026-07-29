@@ -23,9 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Company-side contract-flow run methods — fully mocked (no live API). Mirrors the Python/TS/Go/C#
- * run-method tests: trigger/list/get, decrypt-only-company, per-party fan-out + local routing,
- * generate one-time-key shape, and the processFlowRun company-leaf document chain.
+ * Company-side contract-flow run methods — fully mocked (no live API): trigger/list/get,
+ * decrypt-only-company, per-party fan-out + local routing, generate one-time-key shape, and the
+ * processFlowRun company-leaf document chain.
  */
 class FlowRunTest {
     private static final String COMPANY_UID = "company-1";

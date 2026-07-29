@@ -23,7 +23,7 @@ import java.util.function.Function;
  * {@link #save(Path)} GET that URL and return the FILE BYTES either way — the caller
  * never has to know which of the two response shapes arrived.
  *
- * <p>#590 — THERE ARE TWO SHAPES, AND WHICH ONE ARRIVES IS THE PERSON'S CHOICE, NOT
+ * <p>THERE ARE TWO SHAPES, AND WHICH ONE ARRIVES IS THE PERSON'S CHOICE, NOT
  * THE COMPANY'S. Whether the person's source field is private decides it, they can
  * change it at any time, and nothing in the API announces it in advance:
  * <ul>
@@ -134,7 +134,7 @@ public final class BinaryHandle {
         this.contentSha256 = result.contentSha256();
 
         if (!result.encrypted()) {
-            // #590: a plaintext answer needs no service key. Demanding `decrypt` here would fail a
+            // A plaintext answer needs no service key. Demanding `decrypt` here would fail a
             // handle built without one on exactly the answers that do not need it.
             this.plainBytes = result.bytes() != null ? result.bytes() : new byte[0];
             return;
@@ -198,7 +198,7 @@ public final class BinaryHandle {
 
     /**
      * Fetch (if needed), decrypt (if needed), and return the primary file bytes — the same bytes for
-     * either response shape, so callers never branch on it themselves (#590).
+     * either response shape, so callers never branch on it themselves.
      */
     public byte[] bytes() {
         if (plainBytes != null) {

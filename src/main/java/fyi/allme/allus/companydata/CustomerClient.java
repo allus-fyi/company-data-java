@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * The CUSTOMER-role client (b2b, #168).
+ * The CUSTOMER-role client (b2b).
  *
  * <p>{@code CustomerClient} is what a connecting company uses to consume and answer another
  * company's service over its {@code acct_*} credentials: list company↔company connections,
@@ -38,10 +38,10 @@ public final class CustomerClient {
     private final RSAPrivateKey accountKey;
     private final ModelDeps deps;
     private final Map<String, RSAPublicKey> pubKeyCache = new LinkedHashMap<>();
-    /** #344 review pass 2: see {@code Client}'s pubkeyLock — same hazard, same remedy. */
+    /** See {@code Client}'s pubkeyLock — same hazard, same remedy. */
     private final Object pubKeyLock = new Object();
     /**
-     * #344 review pass 3: a per-key GENERATION counter, bumped by every invalidation.
+     * A per-key GENERATION counter, bumped by every invalidation.
      *
      * <p>Locking the map alone is not enough. The fetch path is check (locked) → release → HTTP →
      * store (locked), so an {@code invalidatePublicKey} landing between the release and the store
@@ -55,13 +55,13 @@ public final class CustomerClient {
      */
     private final Map<String, Long> pubKeyGen = new LinkedHashMap<>();
     /**
-     * #344 review pass 3: {@code serviceKeyCache} and {@code requestTypeCache} sit on the same
+     * {@code serviceKeyCache} and {@code requestTypeCache} sit on the same
      * concurrent encryption paths as {@code pubKeyCache}, so an unsynchronised {@code
      * LinkedHashMap} corrupts under concurrent read+write. {@code requestTypeCache} has no
      * invalidator, so it needs no generation counter — but adding one later MUST bring a
      * generation with it.
      *
-     * <p>#411 is that "later" for {@code serviceKeyCache}: it now HAS an invalidator ({@link
+     * <p>{@code serviceKeyCache} is that "later": it HAS an invalidator ({@link
      * #invalidateServiceKey}, driven by the {@code service_key_rotated} change), so it carries
      * {@code serviceKeyGen} under {@code otherLock}, on exactly the same check → release → HTTP →
      * store reasoning as {@code pubKeyGen} above.
@@ -69,7 +69,7 @@ public final class CustomerClient {
     private final Object otherLock = new Object();
     private final Map<String, RSAPublicKey> serviceKeyCache = new LinkedHashMap<>();
     private final Map<String, Long> serviceKeyGen = new LinkedHashMap<>();
-    // "companyCode/serviceCode" → {request_field_id: field_type}, for typed-answer validation (#302).
+    // "companyCode/serviceCode" → {request_field_id: field_type}, for typed-answer validation.
     private final Map<String, Map<String, String>> requestTypeCache = new LinkedHashMap<>();
     private Pump pump;
 
@@ -243,7 +243,7 @@ public final class CustomerClient {
     }
 
     /**
-     * #344 — drop a person's cached RSA public key, by user id. See {@code
+     * Drop a person's cached RSA public key, by user id. See {@code
      * Client#invalidatePublicKey}; the changes feed calls this for you, webhook consumers must
      * call it themselves.
      */
@@ -256,7 +256,7 @@ public final class CustomerClient {
     }
 
     /**
-     * #411 — drop a SERVICE's cached RSA public key, so the next answer or document encrypted to it
+     * Drop a SERVICE's cached RSA public key, so the next answer or document encrypted to it
      * refetches. The mirror of {@link #invalidatePublicKey} in the service→customer direction.
      *
      * <p>The changes feed calls this for you on a {@code service_key_rotated} event; webhook
@@ -273,9 +273,9 @@ public final class CustomerClient {
     }
 
     private Change decryptChange(Map<String, Object> event) {
-        // #344: this cache also stores a negative (null) result, so without invalidation a person
+        // This cache also stores a negative (null) result, so without invalidation a person
         // who had not generated keys yet would stay unresolvable for the process lifetime too.
-        // #344: the pull feed names it `event`; a raw webhook body names it `action` (and on
+        // The pull feed names it `event`; a raw webhook body names it `action` (and on
         // document rows `action` carries signed|accepted|cancelled instead) — so match either key.
         if ("key_rotated".equals(event.get("event")) || "key_rotated".equals(event.get("action"))) {
             Object personId = event.get("person_user_id") != null
@@ -284,7 +284,7 @@ public final class CustomerClient {
                 invalidatePublicKey(s);
             }
         }
-        // #411: a service this customer connects to replaced its keypair — drop the cached copy so
+        // A service this customer connects to replaced its keypair — drop the cached copy so
         // the next encryption refetches. Same either-key match as above.
         if ("service_key_rotated".equals(event.get("event"))
                 || "service_key_rotated".equals(event.get("action"))) {
@@ -341,7 +341,7 @@ public final class CustomerClient {
 
     /**
      * Fetch a binary file endpoint and classify its response — the same two-shape rule the company
-     * side uses (#590), because the same route serves both roles: the shape follows the person's
+     * side uses, because the same route serves both roles: the shape follows the person's
      * privacy choice, not the caller's role. See {@link BinaryFetchResult#isPlaintextShape}.
      */
     private BinaryFetchResult fetchBinary(String valueUrl) {
@@ -361,7 +361,7 @@ public final class CustomerClient {
     /**
      * Resolve {@code {request_field_id: field_type}} for a service from the connect-screen lookup,
      * cached per company/service. Best-effort — a lookup failure yields an empty map so
-     * typed-answer validation is simply skipped (#302).
+     * typed-answer validation is simply skipped.
      */
     private Map<String, String> requestFieldTypes(String companyCode, String serviceCode) {
         String key = companyCode + "/" + serviceCode;
@@ -403,7 +403,7 @@ public final class CustomerClient {
         if (pub == null) {
             throw new ConfigException("no service key for " + companyCode + "/" + serviceCode);
         }
-        // #302: validate each typed answer against its request row's field type, BEFORE encryption.
+        // Validate each typed answer against its request row's field type, BEFORE encryption.
         // Skip an answer whose type can't be resolved (do not invent one).
         Map<String, String> types = requestFieldTypes(companyCode, serviceCode);
         for (TypedAnswer a : answers) {
@@ -438,7 +438,7 @@ public final class CustomerClient {
         String spki = (body instanceof Map<?, ?> m && m.get("public_key") != null) ? String.valueOf(m.get("public_key")) : null;
         RSAPublicKey loaded = (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null;
         synchronized (otherLock) {
-            // #411: store ONLY if no invalidation happened while the request was in flight.
+            // Store ONLY if no invalidation happened while the request was in flight.
             if (serviceKeyGen.getOrDefault(key, 0L) == gen) {
                 serviceKeyCache.put(key, loaded);
             }

@@ -85,7 +85,7 @@ public final class IdentityHandlers {
     private static final String DEFAULT_AUTHORIZE_BASE = OAuthClient.DEFAULT_AUTHORIZE_URL; // web.allme.fyi/auth
 
     /**
-     * Refusal when the request carries no Host header, so the browser's origin is unknown (#574). There is
+     * Refusal when the request carries no Host header, so the browser's origin is unknown. There is
      * NO default host: substituting one (localhost) silently sends the round-trip to a DIFFERENT origin
      * than the browser is on — a different localStorage and a redirect URI the OAuth app never registered.
      */
@@ -104,11 +104,9 @@ public final class IdentityHandlers {
     private static final long POLL_INTERVAL_S = 2;
 
     /**
-     * The "what just happened" trace (#578). Every entry is {@code <SDK method> — <what that call did in
+     * The "what just happened" trace. Every entry is {@code <SDK method> — <what that call did in
      * THIS scenario>}, appended AT the call site, in the order the calls were made; an entry wrapped in
-     * parentheses is a step that is deliberately NOT an SDK call. The annotations are byte-identical in
-     * all six SDK examples — only the method reference is written in the language's own idiom — so one
-     * scenario teaches one thing whichever example a reader starts. Keep them in step when this handler
+     * parentheses is a step that is deliberately NOT an SDK call. Keep them in step when this handler
      * changes: the panel is headed "What just happened", and a list that no longer matches the code is
      * worse than a short one.
      */
@@ -161,7 +159,7 @@ public final class IdentityHandlers {
             Http.json(ex, 404, Map.of("error", "not_found"));
             return;
         }
-        // The redirect URI is derived from THIS request's origin and from nothing else (#574). Refuse
+        // The redirect URI is derived from THIS request's origin and from nothing else. Refuse
         // rather than invent a host: the suite renders this sentence on Save.
         if (requestHost(ex).isEmpty()) {
             Http.json(ex, 400, Map.of("error", NO_ORIGIN));
@@ -351,7 +349,7 @@ public final class IdentityHandlers {
 
         try {
             if ("true".equals(q.get("enrolled"))) {
-                // Redirect-leg enrollment outcome (#436) — nothing to exchange; record it.
+                // Redirect-leg enrollment outcome — nothing to exchange; record it.
                 run.put("status", "done");
                 run.put("result", Map.of("enrolled", true));
                 appendCall(run, CALL_ENROLLED_CALLBACK);
@@ -600,7 +598,7 @@ public final class IdentityHandlers {
     /**
      * The redirect URI recorded in the scenario's config file (used by the OIDC library) — the SAME value
      * the authorize URL carried, so the two legs of the exchange cannot diverge. An absent record is a
-     * loud failure, never a substituted host (#574).
+     * loud failure, never a substituted host.
      */
     private String configRedirectUri(int id) {
         String v = strOr(loadConfig(id).get("oauth_redirect_uri"), "");
@@ -617,10 +615,10 @@ public final class IdentityHandlers {
     }
 
     /**
-     * The registered redirect URI: http://{host}/callback, host = the origin the browser actually used
-     * (#553). The server binds all interfaces, so a phone on the LAN saves ITS origin into the config file
+     * The registered redirect URI: http://{host}/callback, host = the origin the browser actually used.
+     * The server binds all interfaces, so a phone on the LAN saves ITS origin into the config file
      * and the OAuth round-trip returns to the phone rather than to the phone's own localhost. Never falls
-     * back to a hardcoded host (#574) — `127.0.0.1` and `localhost` are DIFFERENT origins for redirect
+     * back to a hardcoded host — `127.0.0.1` and `localhost` are DIFFERENT origins for redirect
      * matching and for browser storage alike, so a substituted default drops the developer on an origin
      * whose localStorage never held the setup and whose URI the OAuth app never registered.
      */
@@ -648,7 +646,7 @@ public final class IdentityHandlers {
     }
 
     /**
-     * #498: a claim carries a mandatory, unique {@code name} — the key {@code values} and
+     * A claim carries a mandatory, unique {@code name} — the key {@code values} and
      * {@code attestations} come back under. The demo's config lists claim TYPES, so the type doubles
      * as the name here; a real integration usually names them for its own domain ("billing_email").
      */
@@ -694,7 +692,8 @@ public final class IdentityHandlers {
 
     /**
      * Record a call on a run's "what just happened" trace through the shared, deduping implementation
-     * (#578, standards §1) — the identity family used to append unconditionally.
+     * (standards §1): appending unconditionally would duplicate an entry whenever a handler runs twice
+     * for the same run.
      */
     private static void appendCall(Map<String, Object> run, String name) {
         Util.recordCall(run, name);

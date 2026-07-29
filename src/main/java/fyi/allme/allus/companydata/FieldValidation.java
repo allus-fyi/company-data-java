@@ -8,11 +8,10 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Field-type value validation — issue #302. Pure + i18n-free. Data-driven: each type maps to a
+ * Field-type value validation. Pure + i18n-free. Data-driven: each type maps to a
  * "kind"; structured types map each sub-field to its own sub-rule (§2b), reusing the same kinds.
  * Validate the PLAINTEXT before encryption, at input surfaces only (never on share/propagate).
- * Kept byte-aligned across web / allus / iOS / Android / the 6 SDKs by
- * {@code docs/contract-field-validation-vector.json}. Reference: {@code frontend/src/fieldValidation.js}.
+ * Kept aligned to the pinned {@code docs/contract-field-validation-vector.json} vector.
  *
  * <p>Contract: {@link #isValid(String, String)} — an empty value is valid (required is the caller's
  * job); only present, non-empty sub-fields of a structured type are checked.
@@ -43,7 +42,7 @@ public final class FieldValidation {
 
     private static final List<String> GENDER = List.of("Male", "Female", "Non-binary", "Prefer not to say");
 
-    // #303: country/nationality store an ISO 3166-1 alpha-2 code; address state = USPS 2-letter code.
+    // country/nationality store an ISO 3166-1 alpha-2 code; address state = USPS 2-letter code.
     // The lists come from the generated country data (do NOT inline them — they would rot).
     private static final Set<String> COUNTRY_SET = Set.copyOf(CountryData.COUNTRY_CODES);
     private static final Set<String> US_STATE_SET = Set.copyOf(CountryData.US_STATE_CODES);
@@ -174,8 +173,8 @@ public final class FieldValidation {
                 if (t.isEmpty()) {
                     return false;
                 }
-                // Reject Java's float/double suffixes (d/D/f/F), which parseDouble accepts but
-                // JS Number() / the other ports do not — keep the ports byte-identical.
+                // Reject Java's float/double suffixes (d/D/f/F), which parseDouble accepts but the
+                // pinned numeric-format contract does not — keep this validator's results aligned with it.
                 char last = t.charAt(t.length() - 1);
                 if (last == 'd' || last == 'D' || last == 'f' || last == 'F') {
                     return false;
@@ -268,12 +267,12 @@ public final class FieldValidation {
         return isValid(fieldType, value) ? null : fieldType;
     }
 
-    /** True if {@code code} is an assigned ISO 3166-1 alpha-2 country code (#303). */
+    /** True if {@code code} is an assigned ISO 3166-1 alpha-2 country code. */
     public static boolean isValidCountryCode(String code) {
         return code != null && COUNTRY_SET.contains(code);
     }
 
-    /** The ITU E.164 dial code (digits only, no {@code +}) for a country code, or null (#303). */
+    /** The ITU E.164 dial code (digits only, no {@code +}) for a country code, or null. */
     public static String dialCodeFor(String code) {
         return code == null ? null : CountryData.DIAL_CODES.get(code);
     }

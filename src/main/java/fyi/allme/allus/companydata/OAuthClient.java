@@ -19,7 +19,7 @@ import java.util.Set;
 import java.util.function.LongConsumer;
 
 /**
- * "Sign in with allme" — the RP-side OAuth client (#195).
+ * "Sign in with allme" — the RP-side OAuth client.
  *
  * <p>A third-party site embeds a "Sign in with allme" button, sends the person to the hosted consent
  * screen, and — once they approve — receives an authorization code at its redirect URI. This wraps
@@ -75,11 +75,11 @@ public final class OAuthClient {
     }
 
     /**
-     * A claim the relying party asks for — a REQUEST FIELD (#498).
+     * A claim the relying party asks for — a REQUEST FIELD.
      *
      * <p>You describe what you need: a {@code name} (the claim's identity on the wire), a field
      * {@code type}, an advisory {@code suggest}ion, whether it is {@code required}, and whether only
-     * a #311-{@code verified} answer will do. You never name one of the person's fields — THEY decide
+     * a cryptographically {@code verified} answer will do. You never name one of the person's fields — THEY decide
      * which of theirs answers it.
      *
      * <p>{@code name} is MANDATORY and must be unique within one request: everything downstream is
@@ -87,8 +87,8 @@ public final class OAuthClient {
      * {@code attestations} maps {@link #completeSignIn} returns). Two claims sharing a name are
      * rejected rather than silently coalesced.
      *
-     * <p>{@code verified} is accepted only where it can be honoured (#498 §3.1b): on the OIDC flow,
-     * and only for a type #311 can attest (v1: {@code email}). Sending it on a {@code one_time}
+     * <p>{@code verified} is accepted only where it can be honoured: on the OIDC flow,
+     * and only for a type this SDK can cryptographically attest (v1: {@code email}). Sending it on a {@code one_time}
      * request is refused with {@code invalid_request} — that leg carries no source row id, so the
      * server could neither enforce the requirement nor attest it.
      */
@@ -100,7 +100,7 @@ public final class OAuthClient {
     }
 
     /**
-     * Proof that a delivered value is the #311-verified one (#498 §3.1a).
+     * Proof that a delivered value is the cryptographically verified one.
      *
      * <p>Present only for a {@code verified} claim under ENCRYPTED delivery. The server builds and
      * seals it against your app key — a client-supplied attestation is never accepted — so it attests
@@ -123,12 +123,12 @@ public final class OAuthClient {
     /**
      * The decrypted conclusion of {@link #completeSignIn}.
      *
-     * <p>#498 §5: {@code user.get("sub")} IS the person's SHARE CODE and is byte-identical to the
+     * <p>{@code user.get("sub")} IS the person's SHARE CODE and is byte-identical to the
      * id_token's {@code sub}; {@code share_code} is retained beside it and now simply equals it.
      * {@code display_name} is GONE — it is a consented {@code name} claim now, or nothing: ask for
      * {@code new Claim("name", "text")} and read {@code values().get("name")}.
      *
-     * <p>#498 §3.1a: {@code attestations} is an ADDITIVE sibling map keyed by the SAME claim name as
+     * <p>{@code attestations} is an ADDITIVE sibling map keyed by the SAME claim name as
      * {@code values}, present only for a {@code verified} claim under ENCRYPTED delivery. An
      * integration that never reads it behaves exactly as before.
      */
@@ -195,7 +195,7 @@ public final class OAuthClient {
             if (c.type() == null || c.type().isEmpty() || NON_CLAIMABLE.contains(c.type())) {
                 continue;
             }
-            // #498 §2: `name` is the claim's identity and it is mandatory. Refused HERE rather than
+            // `name` is the claim's identity and it is mandatory. Refused HERE rather than
             // left to the API, so the integration error surfaces at the call that made it.
             String name = c.name() == null ? "" : c.name().trim();
             if (name.isEmpty()) {
@@ -278,7 +278,7 @@ public final class OAuthClient {
     }
 
     /**
-     * #498 §3.1a — open the app-key-sealed attestations and attest each value ourselves.
+     * Open the app-key-sealed attestations and attest each value ourselves.
      *
      * <p>A SECOND decrypt per verified claim: {@code values} is byte-identical to before, but each
      * attestation is its own {@code {"_enc":1,...}} object. A passthrough accessor handing back an
@@ -351,7 +351,7 @@ public final class OAuthClient {
      * Poll /oauth2/result for a detached sign-in or enrollment (single-delivery).
      *
      * <p>A detached sign-in returns {@code {code, state}}; a detached {@code 2fa_enroll} returns
-     * {@code {enrolled: true, state}} (#481). Returns on the first delivered shape ({@code code} OR
+     * {@code {enrolled: true, state}}. Returns on the first delivered shape ({@code code} OR
      * {@code enrolled}) and never polls past it, so a one-shot enrollment result is not consumed and lost.
      */
     public Map<String, Object> pollResult(String state, long timeoutSeconds, long intervalSeconds) {
@@ -373,7 +373,7 @@ public final class OAuthClient {
             int status = res.status();
             if (status == 200) {
                 Map<String, Object> body = parseObject(res.body());
-                // #481: return on the first delivered terminal shape — a sign-in `code` OR a
+                // Return on the first delivered terminal shape — a sign-in `code` OR a
                 // `2fa_enroll` `enrolled` sentinel ({enrolled: true, state}). Both are one-shot;
                 // returning here (rather than looping) keeps an enrollment result from being lost.
                 if (body.containsKey("code") || Boolean.TRUE.equals(body.get("enrolled"))) {

@@ -39,7 +39,7 @@ import java.util.stream.Stream;
  *   <li>refuse a busy port with a clear message</li>
  *   <li>serve port {@code ${PORT:-8091}} on ALL interfaces with a SINGLE-thread executor (single
  *       worker), so a phone on the same network can reach it, printing every URL it is reachable
- *       on (#553)</li>
+ *       on</li>
  * </ol>
  */
 public final class Main {
@@ -82,7 +82,7 @@ public final class Main {
                 + "(one browser origin is shared across SDK examples, so only one runs at a time).");
         }
 
-        // 5. serve — SINGLE WORKER (single-thread executor), on ALL interfaces (#553): the wildcard
+        // 5. serve — SINGLE WORKER (single-thread executor), on ALL interfaces: the wildcard
         // InetSocketAddress(port) binds every interface, so a phone on the same network can reach it.
         HttpServer http = HttpServer.create(new InetSocketAddress(port), 0);
         http.setExecutor(Executors.newSingleThreadExecutor());
@@ -178,7 +178,7 @@ public final class Main {
     }
 
     /**
-     * Announces every URL the server is reachable on (#553).
+     * Announces every URL the server is reachable on.
      *
      * <p>The server binds all interfaces, so a phone on the same network can reach it — but only if
      * the person holding the phone knows which address to type. Prints the loopback URL AND every

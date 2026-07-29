@@ -1,7 +1,7 @@
 package fyi.allme.allus.companydata;
 
 /**
- * A freshly-typed value failed its field type's shape/format check (#302) before encryption.
+ * A freshly-typed value failed its field type's shape/format check before encryption.
  * Names the offending {@link #getSlug()} (a flow slug or a request_field_id) and the resolved
  * {@link #getFieldType()}. Client validation is UX, never a security boundary.
  *

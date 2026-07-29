@@ -67,20 +67,18 @@ public final class Http {
     }
 
     /**
-     * The contract's FAILURE envelope (#583):
+     * The contract's FAILURE envelope:
      * {@code {"error": "<token> — <reason>", "message": "<reason>"}}.
      *
-     * <p>The suite's shared client raises {@code body.error} VERBATIM and ignores every other key
-     * ({@code api.js}: {@code throw new Error(body.error || "start failed (…)")}), so a bare token in
-     * {@code error} reaches the developer as one uninformative word and the REASON — which the backend
-     * has right there — is dropped. That is the swallowed failure of standards.html §9: a failure
-     * converted into something indistinguishable from any other failure. The token is kept and the
-     * reason appended in the shape this contract already uses for exactly this ({@code no_origin — …},
-     * #574); {@code message} keeps the bare reason for a programmatic reader.
+     * <p>The suite's shared client raises {@code body.error} VERBATIM and ignores every other key, so a
+     * bare token in {@code error} reaches the developer as one uninformative word and the REASON — which
+     * the backend has right there — is dropped. That is the swallowed failure of standards.html §9: a
+     * failure converted into something indistinguishable from any other failure. The token is kept and the
+     * reason appended in the shape this contract already uses for exactly this ({@code no_origin — …});
+     * {@code message} keeps the bare reason for a programmatic reader.
      *
      * <p>NOT used for the token-only refusals the suite handles by STATUS rather than body —
-     * {@code 409 not_configured} ({@code startScenario} maps the 409 before reading the body) and
-     * {@code 404 not_found}.
+     * {@code 409 not_configured} (mapped before the body is read) and {@code 404 not_found}.
      */
     public static void failure(HttpExchange ex, int status, String token, String reason) throws IOException {
         String text = reason == null ? "" : reason.trim();

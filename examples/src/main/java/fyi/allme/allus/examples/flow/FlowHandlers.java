@@ -61,11 +61,9 @@ public final class FlowHandlers {
     private static final String INVALID_EMAIL = "not-an-email";
 
     /**
-     * The "what just happened" trace (#578). Every entry is {@code <SDK method> — <what that call did in
-     * THIS scenario>}, appended AT the call site, in the order the calls were made. The annotations are
-     * byte-identical in all six SDK examples — only the method reference is written in the language's own
-     * idiom — so one scenario teaches one thing whichever example a reader starts. Keep them in step when
-     * this handler changes.
+     * The "what just happened" trace. Every entry is {@code <SDK method> — <what that call did in
+     * THIS scenario>}, appended AT the call site, in the order the calls were made. Keep the wording
+     * stable when this handler changes so the trace keeps reading as what the run DID.
      */
     private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
     private static final String CALL_IDENTITY = "Client.identity — GET /api/company-data/whoami: this service's own company_user_id, which the COMPANY party binds to";

@@ -58,12 +58,10 @@ public final class CompanyDataHandlers {
     public static final String WEBHOOK = "companydata:webhook";
 
     /**
-     * The "what just happened" trace (#578). Every entry is {@code <SDK method> — <what that call did in
+     * The "what just happened" trace. Every entry is {@code <SDK method> — <what that call did in
      * THIS scenario>}, appended AT the call site, in the order the calls were made; an entry wrapped in
-     * parentheses is a step that is deliberately NOT an SDK call. The annotations are byte-identical in
-     * all six SDK examples — only the method reference is written in the language's own idiom — so one
-     * scenario teaches one thing whichever example a reader starts. Keep them in step when this handler
-     * changes.
+     * parentheses is a step that is deliberately NOT an SDK call. Keep the wording stable when this
+     * handler changes so the trace keeps reading as what the run DID.
      */
     private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
     private static final String CALL_CONNECTIONS = "Client.connections — pages GET /api/company-data/connections: loads your request-field catalog first for value typing, then decrypts each person's values with the service key";
@@ -402,7 +400,7 @@ public final class CompanyDataHandlers {
      * Start the single accumulating webhook run. Persists the routing record webhookId → runId
      * (superseding any prior active webhook run) and returns {@code {action:{type:"none"}}} — there is NO
      * long-poll (it would wedge the single worker). Events arrive via POST /webhook and via a per-poll
-     * {@link Client#drainBatch} feed fallback; the frontend reads the growing list through GET /api/runs.
+     * {@link Client#drainBatch} feed fallback; the growing list is read back via GET /api/runs.
      */
     private void startWebhook(HttpExchange ex) throws IOException {
         String webhookId = strOr(rt.readConfigMeta(WEBHOOK).get("webhook_id"), "");
@@ -583,7 +581,7 @@ public final class CompanyDataHandlers {
 
     /**
      * The rendered-column projection of a Change PLUS a raw object holding the full public Change fields,
-     * so the frontend's JSON.stringify(result) Raw view can show the event-specific extras — the compact
+     * so a raw/detailed view of the response can still show the event-specific extras — the compact
      * renderer uses only the leading columns and ignores raw. Nothing is dropped from result. {@code
      * source} labels a webhook delivery vs a pull-feed row (null for the changes scenario).
      */

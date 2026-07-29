@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.function.LongConsumer;
 
 /**
- * #436 2FA-by-allme — the relying-party challenge API (spec §3), on the SERVICE's data-client credentials
+ * 2FA-by-allme — the relying-party challenge API (spec §3), on the SERVICE's data-client credentials
  * (the same auth {@link Client} uses). Reached via {@link Client#twoFactor()}.
  *
  * <p>A service asks a person (by share code) to approve a login inside the allme app, then polls for the
@@ -59,7 +59,7 @@ public final class TwoFactorClient {
 
     /**
      * Poll {@link #result} until the status is terminal (no longer {@code pending}) and return that
-     * first terminal {@link TwoFactorResult} (#481; mirrors the §12c {@code pollResult} precedent).
+     * first terminal {@link TwoFactorResult} (mirrors the §12c {@code pollResult} precedent).
      *
      * <p>Because the first terminal read burns the challenge, this returns as soon as the status
      * leaves {@code pending} — it never re-reads a consumed result. Throws {@link ApiException} if

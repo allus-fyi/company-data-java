@@ -31,7 +31,7 @@ public record Value(
         return new Value(typed, live, updatedAt, verifiedFrom(entry, typed), entry);
     }
 
-    /** #311: recompute the verified flag from the just-decrypted plaintext (email String only). */
+    /** Recompute the verified flag from the just-decrypted plaintext (email String only). */
     static boolean verifiedFrom(Map<String, Object> obj, Object plaintext) {
         if (!(plaintext instanceof String pt)) return false;
         String vhash = Parse.str(obj.get("verified_hash"));

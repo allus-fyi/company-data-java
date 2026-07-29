@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** One service the customer is connected to, inside a {@link CustomerConnection} (b2b, #168). */
+/** One service the customer is connected to, inside a {@link CustomerConnection} (b2b). */
 public record CustomerServiceLink(
     String serviceLinkId,
     String serviceId,

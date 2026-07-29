@@ -15,8 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Field-type validation parity — every case in the shared vector must match. The same vector pins
- * the web reference + the allus/iOS/Android/other-SDK ports.
+ * Field-type validation parity — every case in the pinned shared vector must match.
  */
 class FieldValidationTest {
 

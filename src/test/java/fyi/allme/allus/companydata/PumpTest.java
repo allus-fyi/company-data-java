@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Crash-safe changes-pump tests. Mirrors the Python reference's test_pump. */
+/** Crash-safe changes-pump tests. */
 class PumpTest {
     private static Map<String, Object> vector;
     private static RSAPrivateKey privateKey;

@@ -158,7 +158,7 @@ public final class Http {
      * GET {@code path} → the whole 2xx {@link Transport.Response} — status, headers AND raw body,
      * with no parse.
      *
-     * <p>#590: the company-facing binary file endpoints have two 200 shapes (a JSON wrapper for an
+     * <p>The company-facing binary file endpoints have two 200 shapes (a JSON wrapper for an
      * encrypted answer, the raw file bytes for a plaintext one) that are told apart by
      * {@code Content-Type}, and both carry an {@code X-Allus-Content-Sha256} digest header. Neither
      * {@link #get} (which parses) nor {@link #getRaw} (which drops the headers) can express that, so
@@ -255,7 +255,7 @@ public final class Http {
 
             if (status == 429) {
                 ErrorBody err = extractError(resp);
-                // #481: a pending-cap 429 means the caller already holds the maximum concurrent
+                // A pending-cap 429 means the caller already holds the maximum concurrent
                 // 2FA challenges — a retry can never clear that, so surface it immediately as an
                 // ApiException instead of the blind Retry-After backoff every other 429 gets.
                 if ("twofa.pending_cap".equals(err.errorKey())) {
@@ -285,7 +285,7 @@ public final class Http {
     /**
      * Parse a response body with the configured {@code format} (json/xml) — the parse
      * {@link #getResponse} deliberately skips, so a caller that had to inspect the headers first can
-     * still get the normal format-aware parse instead of hard-wiring JSON (#590).
+     * still get the normal format-aware parse instead of hard-wiring JSON.
      */
     public Object parseBody(Transport.Response resp) {
         return parseBody(resp, "xml".equals(config.format()));
@@ -338,7 +338,7 @@ public final class Http {
         if (body instanceof Map<?, ?> m) {
             Object errorKey = m.get("error_key");
             Object message = m.get("error") != null ? m.get("error") : m.get("message");
-            // #590: everything BESIDE the key and the message travels on as `details`, so a body
+            // Everything BESIDE the key and the message travels on as `details`, so a body
             // that carries actionable data (a 410 file_expired's content_sha256 + expired_at) is
             // readable without a bespoke exception type per response.
             Map<String, Object> details = new LinkedHashMap<>();

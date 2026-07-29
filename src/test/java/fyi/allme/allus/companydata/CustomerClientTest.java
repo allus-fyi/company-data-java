@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CustomerClient (b2b, #168) — parse + method-shape + key-sourcing tests.
+ * CustomerClient (b2b) — parse + method-shape + key-sourcing tests.
  * Reuses the shared decryption vector's key as the customer ACCOUNT key.
  */
 final class CustomerClientTest {
