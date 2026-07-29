@@ -137,7 +137,8 @@ answers and (for the contract fixture) download the generated document.
 
 | Step | SDK call(s) |
 |---|---|
-| Trigger | `Client.identity()` (company party) + `Client.connection(id)` (customer party) → `Client.triggerFlowRun(...)` |
+| Resolve | `Client.requestFields()` matched by flow name + published version; `Client.connections()` matched by share code |
+| Trigger | `Client.identity()` (company party) + the resolved connection (customer party) → `Client.triggerFlowRun(...)` |
 | Drive (per poll) | `Client.flowRun(id)`; if it's the company's turn `Client.processFlowRun(id, fill)` |
 | Complete | `Client.flowRunAnswers(run)`; document mode also `Client.flowRunDocument(id)` |
 
@@ -149,8 +150,10 @@ The demo ships **two importable flow packages** under [`fixtures/`](fixtures/):
 | `fixtures/contract.zip` | `document` — a company step, then a signature leaf that generates a document. |
 
 Import the chosen fixture in the portal (service settings → Flows → Import) and
-**publish** it, then enter the published flow id + target connection id in the
-scenario setup. The `email` step is submitted once with a bad value → rejected
+**publish** it, then enter the flow's **name** + the **published version** the
+portal shows next to it, and the demo person's own **share code**, in the
+scenario setup — the backend resolves both to the ids the SDK needs. The `email`
+step is submitted once with a bad value → rejected
 (the SDK's `ValidationException`, shown ✗), then re-submitted valid → accepted ✓.
 
 > **Phone required.** The person's turn — and the contract fixture's signature —
@@ -261,4 +264,6 @@ the same step; the startup guard refuses a mismatch loudly).
 | **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from what this backend implements (v3). Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |
 | **`frontend checksum MISMATCH`** | The downloaded `dist.tar.gz` doesn't match `frontend.lock`'s `sha256`. Fix the `sha256` or re-download; the example refuses an unverified bundle. |
 | **A data scenario shows `failed` with an HTTP/transport error** | The `api_url` / credentials in the setup panel can't reach the platform — check them; the run correctly surfaces the error rather than a blank success. |
-| **`start_failed` (flow) naming a missing connection / key** | The connection id, service PEM, or passphrase is wrong — re-check them in the setup and Save again. The portal shows no per-service list of connected people; get the connection id by running the **Read connected people** scenario and opening its **Raw** view. |
+| **`start_failed` (flow) naming a missing flow, or a key** | The flow name/published version, service PEM, or passphrase is wrong — re-check them against the portal's flow list (name + "Published vN") and Save again. |
+| **`start_failed` (flow) naming more than one matching flow** | Two flows on this service share the same name AND published version — rename one of them (the flow builder's name field) so the pair is unique, then try again. |
+| **`connection_error` (flow) naming a missing connection** | The share code is wrong, or the person isn't connected to this service yet. |

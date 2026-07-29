@@ -66,8 +66,9 @@ public final class FlowHandlers {
      * stable when this handler changes so the trace keeps reading as what the run DID.
      */
     private static final String CALL_SERVICE_BUILD = "Client.fromConfig — builds the SERVICE-role data client from the saved config file: client credentials plus the service private key, decrypted with its passphrase";
+    private static final String CALL_REQUEST_FIELDS = "Client.requestFields — resolves the flow name + published version (the only handle the portal ever shows for it) to its flow id";
     private static final String CALL_IDENTITY = "Client.identity — GET /api/company-data/whoami: this service's own company_user_id, which the COMPANY party binds to";
-    private static final String CALL_CONNECTION = "Client.connection — reads the configured connection; the connected person's id on it is what the CUSTOMER party binds to";
+    private static final String CALL_CONNECTIONS = "Client.connections — resolves the person's own share code to the connection whose id the CUSTOMER party binds to";
     private static final String CALL_TRIGGER = "Client.triggerFlowRun — starts a run of the published flow for that connection, pinning the flow's latest published version";
     private static final String CALL_FLOW_RUN = "Client.flowRun — re-read on every poll to see whose turn the run is on";
     private static final String CALL_PROCESS = "Client.processFlowRun — drives ONE company step: decrypts the answers so far, fills the node, type-checks the values, encrypts a copy per party, submits — and generates the document when the submit lands on a document-mode leaf";
@@ -91,9 +92,10 @@ public final class FlowHandlers {
 
     /**
      * Write the browser's setup values to a canonical SDK config FILE (service role). The service PEM is
-     * written to config/keys/ and referenced by path; the demo-only run parameters (published flow id,
-     * connection id, fixture choice) go to the meta sidecar so the config file stays a pure SDK config
-     * the run executes off.
+     * written to config/keys/ and referenced by path; the demo-only run parameters (flow name + published
+     * version, the person's share code, fixture choice) go to the meta sidecar so the config file stays a
+     * pure SDK config the run executes off. Neither the flow id nor the connection id is ever collected
+     * here — {@link #start} resolves both via the SDK instead of taking either as a raw database id.
      */
     public void config(HttpExchange ex, String id) throws IOException {
         Map<String, Object> in = Http.body(ex);
@@ -113,8 +115,9 @@ public final class FlowHandlers {
 
         // Demo-only run parameters (NOT SDK Config fields) → meta sidecar.
         Map<String, Object> meta = new LinkedHashMap<>();
-        meta.put("flow_id", strOr(in.get("flowId"), ""));
-        meta.put("connection_id", strOr(in.get("connectionId"), ""));
+        meta.put("flow_name", strOr(in.get("flowName"), ""));
+        meta.put("flow_version", strOr(in.get("flowVersion"), ""));
+        meta.put("share_code", strOr(in.get("shareCode"), ""));
         meta.put("fixture", strOr(in.get("fixture"), ""));
         rt.writeConfigMeta(SCENARIO, meta);
 
@@ -127,11 +130,13 @@ public final class FlowHandlers {
     // ── POST /api/scenarios/{id}/start ─────────────────────────────────────────
 
     /**
-     * Trigger the flow run. Build the service {@link Client} from the persisted config file, construct
-     * the bindings via the intended SDK surface (company → {@link Identity#companyUserId()}; customer →
-     * {@link Connection#personId()}), call {@link Client#triggerFlowRun}, and store the returned platform
-     * flowRunId in the demo run file. Returns {@code {runId, action:{"type":"none"}}} — the drive happens
-     * on the {@code GET /api/runs} poll.
+     * Trigger the flow run. Build the service {@link Client} from the persisted config file, resolve the
+     * flow name + published version and the person's share code to the ids {@link Client#triggerFlowRun}
+     * needs (neither is ever collected as a raw id), construct the bindings via the intended SDK surface
+     * (company → {@link Identity#companyUserId()}; customer → {@link Connection#personId()}), call
+     * {@link Client#triggerFlowRun}, and store the returned platform flowRunId in the demo run file.
+     * Returns {@code {runId, action:{"type":"none"}}} — the drive happens on the {@code GET /api/runs}
+     * poll.
      */
     public void start(HttpExchange ex, String id) throws IOException {
         if (!rt.hasConfig(SCENARIO)) {
@@ -140,13 +145,25 @@ public final class FlowHandlers {
             return;
         }
         Map<String, Object> meta = rt.readConfigMeta(SCENARIO);
-        String flowId = strOr(meta.get("flow_id"), "");
-        String connectionId = strOr(meta.get("connection_id"), "");
-        if (flowId.isEmpty() || connectionId.isEmpty()) {
+        String flowName = strOr(meta.get("flow_name"), "").trim();
+        String flowVersionRaw = strOr(meta.get("flow_version"), "").trim();
+        String shareCode = strOr(meta.get("share_code"), "").trim();
+        if (flowName.isEmpty() || flowVersionRaw.isEmpty() || shareCode.isEmpty()) {
             Map<String, Object> err = new LinkedHashMap<>();
             err.put("error", "not_configured");
-            err.put("message", "flow id and connection id are required");
+            err.put("message", "flow name, published version and share code are required");
             Http.json(ex, 409, err);
+            return;
+        }
+        int flowVersion;
+        try {
+            flowVersion = Integer.parseInt(flowVersionRaw);
+        } catch (NumberFormatException nfe) {
+            Http.failure(ex, 400, "start_failed", "published version \"" + flowVersionRaw + "\" is not a number");
+            return;
+        }
+        if (flowVersion < 0) {
+            Http.failure(ex, 400, "start_failed", "published version \"" + flowVersionRaw + "\" is not a number");
             return;
         }
 
@@ -155,6 +172,26 @@ public final class FlowHandlers {
         try {
             calls.add(CALL_SERVICE_BUILD);
             Client client = serviceClient();
+
+            // Resolve the flow name + published version to its flow id. The pair is not guaranteed
+            // unique (nothing enforces it), so this can return zero, one, or more than one candidate —
+            // only exactly one is safe to proceed on; anything else refuses rather than guess.
+            calls.add(CALL_REQUEST_FIELDS);
+            List<String> flowCandidates = resolveFlowIdCandidates(client, flowName, flowVersion);
+            if (flowCandidates.isEmpty()) {
+                Http.failure(ex, 404, "start_failed",
+                    "no published flow named \"" + flowName + "\" at version " + flowVersion
+                        + " — check the name and the \"Published vN\" the portal shows next to it");
+                return;
+            }
+            if (flowCandidates.size() > 1) {
+                Http.failure(ex, 409, "start_failed",
+                    "more than one flow matches the name \"" + flowName + "\" at version " + flowVersion
+                        + " — rename one of them in the portal (the flow builder's name field, next to "
+                        + "\"Published vN\") so the pair is unique, then try again");
+                return;
+            }
+            String flowId = flowCandidates.get(0);
 
             // The COMPANY party binds to this service's own company_user_id.
             calls.add(CALL_IDENTITY);
@@ -165,13 +202,20 @@ public final class FlowHandlers {
                 return;
             }
 
-            // The CUSTOMER party binds to the connected person's public personId (no public user_id).
-            calls.add(CALL_CONNECTION);
-            Connection connection = client.connection(connectionId);
+            // Resolve the person's own share code to their connection — the CUSTOMER party binds to
+            // the connected person's public personId (no public user_id).
+            calls.add(CALL_CONNECTIONS);
+            Connection connection = resolveConnection(client, shareCode);
+            if (connection == null) {
+                Http.failure(ex, 404, "connection_error",
+                    "no connection found for share code \"" + shareCode + "\" — is the person connected to this service?");
+                return;
+            }
+            String connectionId = strOr(connection.id(), "");
             String personId = connection.personId();
-            if (personId == null || personId.isEmpty()) {
+            if (connectionId.isEmpty() || personId == null || personId.isEmpty()) {
                 Http.failure(ex, 502, "connection_error",
-                    "connection " + connectionId + " has no personId (not found or not connected)");
+                    "connection for share code \"" + shareCode + "\" has no id/personId (not found or not connected)");
                 return;
             }
 
@@ -441,6 +485,57 @@ public final class FlowHandlers {
             out.put("error", run.get("error"));
         }
         return out;
+    }
+
+    // ── resolving a name + code the developer can obtain into the ids the SDK needs ─
+
+    /**
+     * Resolve a flow's name + published version to its CANDIDATE flow ids. flow_id/flow_name/flow_version
+     * ride the additive {@code raw()} map on the flow-tagged rows {@link Client#requestFields()} returns —
+     * they are not typed record components of {@link fyi.allme.allus.companydata.RequestField}. Returns
+     * every DISTINCT flow id whose tagged fields match both name and version, deduplicated, in first-seen
+     * order — nothing here guarantees the pair is unique, so the caller decides what to do with zero,
+     * one, or more than one candidate.
+     */
+    private static List<String> resolveFlowIdCandidates(Client client, String flowName, int flowVersion) {
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (var field : client.requestFields()) {
+            Map<String, Object> raw = field.raw();
+            Object name = raw.get("flow_name");
+            Object version = raw.get("flow_version");
+            if (!flowName.equals(name) || version == null || flowVersion != asInt(version)) {
+                continue;
+            }
+            Object flowId = raw.get("flow_id");
+            if (flowId instanceof String s && !s.isEmpty()) {
+                seen.add(s);
+            }
+        }
+        return new ArrayList<>(seen);
+    }
+
+    /**
+     * Resolve a person's own share code to their {@link Connection}. {@code connections()} auto-pages the
+     * whole service — a demo has too few connections for that to matter, but it is the same call a real
+     * integrator would make to look a person up by the one identifier they can read off their own app.
+     */
+    private static Connection resolveConnection(Client client, String shareCode) {
+        String wanted = shareCode.toUpperCase(java.util.Locale.ROOT);
+        for (Connection connection : client.connections()) {
+            String code = connection.shareCode();
+            if (code != null && code.toUpperCase(java.util.Locale.ROOT).equals(wanted)) {
+                return connection;
+            }
+        }
+        return null;
+    }
+
+    /** Coerces a decoded-JSON number (Integer/Long/Double or a numeric String) to an int. */
+    private static int asInt(Object v) {
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        return Integer.parseInt(String.valueOf(v));
     }
 
     // ── SDK client builder — built from the persisted config FILE ──────────────
