@@ -44,7 +44,8 @@ import static fyi.allme.allus.examples.Util.strOr;
  *   <li>{@code webhook}     — {@link Client#verifyWebhook}/{@link Client#parseWebhook} → a public
  *       {@code POST /webhook} receiver + a {@link Client#drainBatch} feed fallback; ONE accumulating run
  *       keyed by the webhook id</li>
- *   <li>{@code documents}   — {@link Client#createDocument}×6  → the six document/contract types</li>
+ *   <li>{@code documents}   — {@link Client#createDocument}  → the document/contract types selected in
+ *       setup (six offered, all ticked by default)</li>
  * </ul>
  *
  * <p>Settings flow: the browser POSTs a scenario's setup to {@code /config}, written to a canonical SDK
@@ -162,6 +163,11 @@ public final class CompanyDataHandlers {
         }
         if (id.equals(DOCUMENTS)) {
             meta.put("share_code", strOr(in.get("shareCode"), "")); // the per-person / contract target
+            // Preserve presence so doDocuments can distinguish an explicit empty selection from
+            // an absent selection; absence means all document types.
+            if (in.containsKey("documentTypes")) {
+                meta.put("document_types", stringList(in.get("documentTypes")));
+            }
         }
 
         String configPath = rt.writeConfig(id, cfg);
@@ -302,44 +308,50 @@ public final class CompanyDataHandlers {
     }
 
     /**
-     * companydata:documents — {@link Client#createDocument} for each of the six document/contract types
-     * (payloads verbatim from apitests/php/documents.php). The per-person / private / contract types
-     * target the connected person by share code (from the setup sidecar).
+     * companydata:documents — {@link Client#createDocument} for each SELECTED document/contract type, of
+     * the six the scenario offers (payloads verbatim from apitests/php/documents.php). The per-person /
+     * private / contract types target the connected person by share code (from the setup sidecar).
+     * Selection comes from the sidecar's document_types list; absence means all six.
      */
     private Map<String, Object> doDocuments(Client client, List<String> calls) {
-        String shareCode = strOr(rt.readConfigMeta(DOCUMENTS).get("share_code"), "");
+        Map<String, Object> meta = rt.readConfigMeta(DOCUMENTS);
+        String shareCode = strOr(meta.get("share_code"), "");
+        boolean hasTypes = meta.containsKey("document_types");
+        List<String> selectedTypes = stringList(meta.get("document_types"));
 
         List<DocSpec> specs = new ArrayList<>();
-        specs.add(new DocSpec("Broadcast plaintext JSON (no target)", false,
+        specs.add(new DocSpec("broadcast_json", "Broadcast plaintext JSON (no target)", false,
             Client.CreateDocumentRequest.builder()
                 .kind("document").name("Service notice").payloadKind("json")
                 .jsonValue(Map.of("msg", "Scheduled maintenance Sunday"))));
-        specs.add(new DocSpec("Broadcast PDF file (no target)", false,
+        specs.add(new DocSpec("broadcast_pdf", "Broadcast PDF file (no target)", false,
             Client.CreateDocumentRequest.builder()
                 .kind("document").name("Price list").payloadKind("file")
                 .fileBytes(minimalPdf("Price list")).fileMime("application/pdf")));
-        specs.add(new DocSpec("Per-person NON-private file", true,
+        specs.add(new DocSpec("per_person_file", "Per-person NON-private file", true,
             Client.CreateDocumentRequest.builder()
                 .kind("document").name("Your invoice").payloadKind("file")
                 .fileBytes(minimalPdf("Your invoice")).fileMime("application/pdf")));
-        specs.add(new DocSpec("Per-person PRIVATE file (lock → reveal)", true,
+        specs.add(new DocSpec("per_person_private", "Per-person PRIVATE file (lock → reveal)", true,
             Client.CreateDocumentRequest.builder()
                 .kind("document").name("Confidential report").payloadKind("file").isPrivate(true)
                 .fileBytes(minimalPdf("Confidential report")).fileMime("application/pdf")));
-        specs.add(new DocSpec("CONTRACT requiring SIGNATURE", true,
+        specs.add(new DocSpec("contract_signature", "CONTRACT requiring SIGNATURE", true,
             Client.CreateDocumentRequest.builder()
                 .kind("agreement").name("Service agreement").payloadKind("file").requiresSignature(true)
                 .fileBytes(minimalPdf("Service agreement")).fileMime("application/pdf")
                 .metadata(mapOf("can_be_cancelled_in_app", true))));
-        specs.add(new DocSpec("CONTRACT requiring ACCEPTANCE", true,
+        specs.add(new DocSpec("contract_acceptance", "CONTRACT requiring ACCEPTANCE", true,
             Client.CreateDocumentRequest.builder()
                 .kind("agreement").name("Terms update").payloadKind("json").requiresAcceptance(true)
                 .jsonValue(Map.of("version", "2.0"))
                 .metadata(acceptanceMetadata())));
 
         List<Map<String, Object>> docs = new ArrayList<>();
-        int index = 1;
         for (DocSpec spec : specs) {
+            if (hasTypes && !selectedTypes.contains(spec.key)) {
+                continue; // deselected in setup — the scenario runs exactly what was chosen
+            }
             if (spec.perPerson) {
                 if (shareCode.isEmpty()) {
                     throw new RuntimeException("this document type targets a connected person — set a "
@@ -350,7 +362,7 @@ public final class CompanyDataHandlers {
             calls.add(String.format(CALL_CREATE_DOCUMENT, spec.label));
             Document doc = client.createDocument(spec.req);
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("index", index++);
+            row.put("index", docs.size() + 1);
             row.put("label", spec.label);
             row.put("document_id", doc.id());
             row.put("status", doc.status());
@@ -381,13 +393,31 @@ public final class CompanyDataHandlers {
         return m;
     }
 
-    /** One document spec: its label, whether it targets the connected person, and the SDK request. */
+    /** Narrows a JSON-decoded value into a list of strings (a non-list value yields an empty list). */
+    private static List<String> stringList(Object v) {
+        List<String> out = new ArrayList<>();
+        if (v instanceof List<?> raw) {
+            for (Object o : raw) {
+                if (o instanceof String s) {
+                    out.add(s);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One document spec: its selection key, its label, whether it targets the connected person, and the
+     * SDK request.
+     */
     private static final class DocSpec {
+        final String key;
         final String label;
         final boolean perPerson;
         final Client.CreateDocumentRequest req;
 
-        DocSpec(String label, boolean perPerson, Client.CreateDocumentRequest req) {
+        DocSpec(String key, String label, boolean perPerson, Client.CreateDocumentRequest req) {
+            this.key = key;
             this.label = label;
             this.perPerson = perPerson;
             this.req = req;

@@ -168,7 +168,7 @@ step is submitted once with a bad value → rejected
 | `companydata:definitions` | Your request-field catalog | `Client.requestFields()` | `data` |
 | `companydata:changes` | Drain the change feed (crash-safe pump, idempotent on `Change.id`) | `Client.processChanges(handler)` | `data` |
 | `companydata:webhook` | Public `POST /webhook` receiver + change-feed fallback | `Client.verifyWebhook` / `Client.parseWebhook`; each poll also `Client.drainBatch(500)` | `none` (accumulating) |
-| `companydata:documents` | Create the six document / contract types | `Client.createDocument(...)` ×6 | `data` |
+| `companydata:documents` | Create document / contract types (six offered, pick which to create) | `Client.createDocument(...)` per selected type | `data` |
 
 The four data scenarios run synchronously on `/start` and store a terminal `done`
 run (read once via `GET /api/runs/{id}`). A build/handler failure — e.g. an
