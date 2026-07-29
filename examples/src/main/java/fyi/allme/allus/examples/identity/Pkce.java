@@ -9,7 +9,7 @@ import java.util.Base64;
  * PKCE (RFC 7636) verifier + S256 challenge — pure local crypto, no network. The SDK takes the
  * {@code code_challenge} into {@link fyi.allme.allus.companydata.OAuthClient#authorizeUrl} and the
  * {@code code_verifier} into {@link fyi.allme.allus.companydata.OAuthClient#completeSignIn}; the demo
- * generates the pair. (Scenarios 5/6 use the Nimbus OIDC library's own {@code CodeVerifier} instead.)
+ * generates the pair. (Scenario 5 uses the Nimbus OIDC library's own {@code CodeVerifier} instead.)
  */
 final class Pkce {
     private static final SecureRandom RANDOM = new SecureRandom();

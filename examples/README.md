@@ -4,7 +4,7 @@ A runnable website that demonstrates **every scenario** of the allme / allus
 platform through the `fyi.allme.allus:company-data` **Java SDK**, in three
 families served together:
 
-- **identity** — Sign in with allme, OIDC login, and 2FA by allme (scenarios 1–8);
+- **identity** — Sign in with allme, OIDC login, and 2FA by allme (scenarios 1–5, 7–8);
 - **flow** — run a company-authored **contract flow** end-to-end (`flow:run`);
 - **company-data** — read connected people's decrypted values, your request-field
   catalog, the change feed, inbound **webhooks**, and creating **documents /
@@ -15,7 +15,7 @@ project is the thin Java backend that implements the
 [demo-backend contract](https://github.com/allme-sdk/example-test-suite)
 (**contract v3**). Every handler goes through the SDK's **intended top-level
 functions** (`OAuthClient`, `Client`, `TwoFactorClient` — never internals, never
-raw platform HTTP); the identity OIDC scenarios (5/6) additionally use the standard
+raw platform HTTP); the identity OIDC scenario (5) additionally uses the standard
 [Nimbus `oauth2-oidc-sdk`](https://connect2id.com/products/nimbus-oauth-openid-connect-sdk)
 client — that is the point of the OIDC demonstration.
 
@@ -112,7 +112,6 @@ consequence is that only one example runs at a time.
 | 3 | One-time claims | `OAuthClient.authorizeUrl("one_time", claims…)` → `OAuthClient.completeSignIn` (decrypts values with the app private key from config) |
 | 4 | Connect (stay-connected) | `OAuthClient.authorizeUrl("connect", …)` → `OAuthClient.completeSignIn`, then `Client.connections()` matched by `share_code` for LIVE values |
 | 5 | OIDC login | Nimbus: `OIDCProviderMetadata.resolve` → `AuthenticationRequest` (PKCE) → `TokenRequest` (`client_secret_post`) → `IDTokenValidator.validate` |
-| 6 | OIDC — continue on phone | same Nimbus flow; completion via the phone's redirect leg |
 | 7 | 2FA at consent — **guide card** | no `/start`; a checklist + links to scenarios 1 and 5 |
 | 8 | Standalone service-2FA + enrollment | `Client.twoFactor().challenge(...)` → `TwoFactorClient.waitForResult`; enroll runs `OAuthClient.authorizeUrl("2fa_enroll", …)` in the redirect & detached legs |
 

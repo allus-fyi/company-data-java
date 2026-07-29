@@ -40,7 +40,7 @@
     </dependency>
 
     <!--
-      The identity OIDC scenarios (5/6) use a STANDARD, idiomatic Java OIDC client — Nimbus
+      The identity OIDC scenario (5) uses a STANDARD, idiomatic Java OIDC client — Nimbus
       oauth2-oidc-sdk — for discovery, PKCE, client_secret_post, and verified id_token validation. That
       is the whole point of the OIDC demonstration (#314): a real OIDC library, not the allme SDK, drives
       the login. It supports issuer override (any api_url) and client_secret_post. Declared here — in the

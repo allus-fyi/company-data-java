@@ -48,6 +48,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 import static fyi.allme.allus.examples.Util.action;
 import static fyi.allme.allus.examples.Util.asInt;
@@ -59,8 +60,8 @@ import static fyi.allme.allus.examples.Util.strOrNull;
 
 /**
  * The identity scenario handlers (config-file model): each handler reaches the SDK's intended top-level
- * surface ({@link OAuthClient} / {@link Client} / {@code TwoFactorClient}) — or, for the OIDC scenarios
- * 5/6, the standard Nimbus OIDC library — and NEVER performs raw platform HTTP. Detached / challenge waits
+ * surface ({@link OAuthClient} / {@link Client} / {@code TwoFactorClient}) — or, for the OIDC scenario
+ * 5, the standard Nimbus OIDC library — and NEVER performs raw platform HTTP. Detached / challenge waits
  * are short-cycled ({@code timeout=2}) inside {@link #pollBody}.
  *
  * <p>Settings flow: the browser POSTs a scenario's setup to {@code /config}, written to a canonical SDK
@@ -73,7 +74,7 @@ public final class IdentityHandlers {
     /** id → "runnable" | "guide". Scenario 7 is the guide card (no /start). */
     private static final Map<Integer, String> SCENARIOS = Map.ofEntries(
         Map.entry(1, "runnable"), Map.entry(2, "runnable"), Map.entry(3, "runnable"),
-        Map.entry(4, "runnable"), Map.entry(5, "runnable"), Map.entry(6, "runnable"),
+        Map.entry(4, "runnable"), Map.entry(5, "runnable"),
         Map.entry(7, "guide"), Map.entry(8, "runnable"));
 
     /** Scenarios that also read live values through the service data {@link Client}. */
@@ -84,7 +85,7 @@ public final class IdentityHandlers {
      * Scenarios whose {@link OAuthClient#completeSignIn} response can carry claim values (userinfo
      * {@code values} non-empty) and therefore need the OAuth app private key configured to decrypt them:
      * mode one_time and mode connect, both delivered as app-key ciphertext through userinfo. Mode signin
-     * (scenarios 1, 2) never carries values; scenario 8 never calls this leg at all; scenarios 5/6 run the
+     * (scenarios 1, 2) never carries values; scenario 8 never calls this leg at all; scenario 5 runs the
      * Nimbus OIDC library instead of this SDK's decrypt path.
      */
     private static final Set<Integer> CLAIM_VALUE_SCENARIOS = Set.of(3, 4);
@@ -147,10 +148,10 @@ public final class IdentityHandlers {
         this.rt = rt;
     }
 
-    /** This family's contribution to GET /api/meta: scenarios 1–8 (7 is the guide card). */
+    /** This family's contribution to GET /api/meta: scenarios 1–5, 7–8 (7 is the guide card). */
     public List<Map<String, Object>> scenarios() {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (int id = 1; id <= 8; id++) {
+        for (int id : new TreeSet<>(SCENARIOS.keySet())) {
             out.add(Map.of("id", id, "kind", SCENARIOS.get(id)));
         }
         return out;
@@ -278,7 +279,7 @@ public final class IdentityHandlers {
                 rt.writeRun(runId, run);
                 Http.json(ex, 200, envelope(runId, action("detached", "url", url)));
             }
-            case 5, 6 -> { // OIDC login / continue-on-phone (Nimbus OIDC library)
+            case 5 -> { // OIDC login (Nimbus OIDC library)
                 CodeVerifier verifier = new CodeVerifier();
                 Nonce nonce = new Nonce();
                 run.put("verifier", verifier.getValue());
@@ -364,7 +365,7 @@ public final class IdentityHandlers {
                 appendCall(run, CALL_ENROLLED_CALLBACK);
             } else if (q.get("code") != null && !q.get("code").isEmpty()) {
                 String code = q.get("code");
-                run = (id == 5 || id == 6) ? completeOidc(run, code) : completeSignin(run, code);
+                run = (id == 5) ? completeOidc(run, code) : completeSignin(run, code);
             } else {
                 run.put("status", "failed");
                 run.put("error", "callback missing code / enrolled");
@@ -497,7 +498,7 @@ public final class IdentityHandlers {
     }
 
     /**
-     * Complete an OIDC sign-in (scenarios 5/6) via the Nimbus OIDC library — the id_token is verified
+     * Complete an OIDC sign-in (scenario 5) via the Nimbus OIDC library — the id_token is verified
      * (signature + issuer + audience + nonce) by {@link IDTokenValidator}.
      */
     private Map<String, Object> completeOidc(Map<String, Object> run, String code) {
