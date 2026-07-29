@@ -199,10 +199,10 @@ public final class OAuthClient {
             // left to the API, so the integration error surfaces at the call that made it.
             String name = c.name() == null ? "" : c.name().trim();
             if (name.isEmpty()) {
-                throw new ConfigException("every claim must carry a `name` (#498)");
+                throw new ConfigException("every claim must carry a `name`");
             }
             if (!seen.add(name)) {
-                throw new ConfigException("duplicate claim name '" + name + "' (#498)");
+                throw new ConfigException("duplicate claim name '" + name + "'");
             }
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("name", name);
