@@ -357,11 +357,13 @@ public final class FlowHandlers {
                                          String flowRunId) {
         run.put("calls", addCall(run.get("calls"), CALL_ANSWERS));
         Map<String, Object> answers = client.flowRunAnswers(flowRun);
+        Map<String, Object> ciphers = ownCipherBySlug(flowRun);
         List<Map<String, Object>> answersOut = new ArrayList<>();
         for (Map.Entry<String, Object> e : answers.entrySet()) {
             Map<String, Object> a = new LinkedHashMap<>();
             a.put("slug", e.getKey());
             a.put("value", e.getValue());
+            a.put("cipher", ciphers.get(e.getKey()));
             answersOut.add(a);
         }
         run.put("answers", answersOut);
@@ -388,6 +390,24 @@ public final class FlowHandlers {
         run.put("status", "completed");
         run.put("completed", true);
         return run;
+    }
+
+    /**
+     * The company's own answer rows, keyed by slug and left as the still-encrypted wrapper the
+     * API returned — the evidence the "Decrypted answers" panel pairs against each cleartext
+     * value, so a reader can see the decrypt actually ran on real ciphertext rather than take it
+     * on faith.
+     */
+    private static Map<String, Object> ownCipherBySlug(FlowRun flowRun) {
+        String serviceUid = flowRun.serviceUserId();
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map<String, Object> row : flowRun.answers()) {
+            Object slug = row.get("slug");
+            if (slug instanceof String s && java.util.Objects.equals(row.get("for_user_id"), serviceUid)) {
+                out.put(s, row.get("value"));
+            }
+        }
+        return out;
     }
 
     /**
