@@ -26,6 +26,11 @@ public final class Http {
         return new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
     }
 
+    /** The whole request body as the exact bytes sent — for content that must not be re-encoded. */
+    public static byte[] rawBodyBytes(HttpExchange ex) throws IOException {
+        return ex.getRequestBody().readAllBytes();
+    }
+
     /** The request query string as a name → value map. */
     public static Map<String, String> query(HttpExchange ex) {
         Map<String, String> out = new LinkedHashMap<>();
@@ -104,6 +109,19 @@ public final class Http {
         ex.sendResponseHeaders(status, b.length);
         try (OutputStream os = ex.getResponseBody()) {
             os.write(b);
+        }
+    }
+
+    /**
+     * Serve a JSON document that is already encoded, byte for byte — the stored setup snapshot. The
+     * bytes are passed through as they are because parsing and re-serialising them here, or decoding
+     * them to a {@code String} and back, would rewrite content this server is not allowed to interpret.
+     */
+    public static void rawJson(HttpExchange ex, int status, byte[] blob) throws IOException {
+        ex.getResponseHeaders().set("Content-Type", "application/json");
+        ex.sendResponseHeaders(status, blob.length);
+        try (OutputStream os = ex.getResponseBody()) {
+            os.write(blob);
         }
     }
 

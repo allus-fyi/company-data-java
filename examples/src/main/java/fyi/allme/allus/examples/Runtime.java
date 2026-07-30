@@ -34,6 +34,8 @@ import java.util.stream.Stream;
  *   <li>{@code config/keys/<sha1>.pem} — the private-key file(s) a config references by path (0600)</li>
  *   <li>{@code runs/{runId}.json}      — one run's PKCE/state/nonce or accumulating result + calls</li>
  *   <li>{@code webhook-route.json}     — the SINGLE active company-data webhook run {webhookId, runId}</li>
+ *   <li>{@code state.json}             — the setup snapshot POSTed to {@code /api/state}, held verbatim
+ *       as OPAQUE cold storage: never parsed here, never used to run anything</li>
  *   <li>{@code cache/}                 — the SDK pump's buffer + dead-letters ({@code Config.cacheDir})</li>
  * </ul>
  * Config files persist across runs (removed only by Clear or the startup wipe); run files are written
@@ -57,6 +59,8 @@ public final class Runtime {
     public final Path cacheDir;
     /** The SINGLE active company-data webhook route record {webhookId, runId}. */
     public final Path routePath;
+    /** The setup snapshot POSTed to {@code /api/state} — opaque bytes, never parsed here. */
+    public final Path statePath;
 
     public Runtime(Path baseDir) {
         this.runtimeDir = baseDir.resolve(".runtime");
@@ -65,6 +69,7 @@ public final class Runtime {
         this.configKeysDir = configDir.resolve("keys");
         this.cacheDir = runtimeDir.resolve("cache");
         this.routePath = runtimeDir.resolve("webhook-route.json");
+        this.statePath = runtimeDir.resolve("state.json");
     }
 
     public void ensureDirs() {
@@ -235,6 +240,40 @@ public final class Runtime {
         quietDelete(routePath);
     }
 
+    // ── the setup snapshot (POST/GET /api/state) ──────────────────────────────
+
+    /**
+     * Store the setup snapshot the request carried, VERBATIM. The bytes are OPAQUE here — never parsed,
+     * never inspected, never used to run anything — so nothing in this class constrains what they may
+     * contain, and an empty body is a snapshot like any other. They stay {@code byte[]} end to end:
+     * decoding to a {@code String} and back would re-encode content this store is not allowed to
+     * interpret. Carries no TTL (it is setup, not a run); removed by a global clear or the startup wipe.
+     */
+    public void writeState(byte[] blob) {
+        ensureDirs();
+        atomicWrite(statePath, blob, null);
+    }
+
+    /**
+     * The stored snapshot's bytes, or null when NO snapshot file exists — the file's presence is the
+     * whole of the answer, since judging the content would be the inspection this store does not do. A
+     * file that exists but cannot be read raises, because that is a fault rather than an absence.
+     */
+    public byte[] readState() {
+        if (!Files.isRegularFile(statePath)) {
+            return null;
+        }
+        try {
+            return Files.readAllBytes(statePath);
+        } catch (IOException exc) {
+            throw new UncheckedIOException(exc);
+        }
+    }
+
+    public void clearState() {
+        quietDelete(statePath);
+    }
+
     // ── clear ─────────────────────────────────────────────────────────────────
 
     /**
@@ -263,7 +302,11 @@ public final class Runtime {
         ensureDirs();
     }
 
-    /** Global clear: wipe all run files and the entire config tree (configs, metas, keys) + route + cache. */
+    /**
+     * Global clear: wipe all run files and the entire config tree (configs, metas, keys) + route +
+     * cache + the saved setup snapshot. The snapshot goes too because it can hold the same credentials
+     * the config tree does — a clear that left it behind would leave those sitting on disk.
+     */
     public void clearAll() {
         try (Stream<Path> files = Files.list(runsDir)) {
             files.forEach(this::quietDelete);
@@ -273,6 +316,7 @@ public final class Runtime {
         rmTree(configDir);
         rmTree(cacheDir);
         clearRoute();
+        clearState();
         ensureDirs();
     }
 

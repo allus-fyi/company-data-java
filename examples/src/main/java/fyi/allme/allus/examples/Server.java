@@ -94,6 +94,18 @@ public final class Server {
             } else if (path.equals("/api/clear") && method.equals("POST")) {
                 rt.clearAll();
                 Http.json(ex, 200, Map.of("ok", true));
+            } else if (path.equals("/api/state") && method.equals("POST")) {
+                // The setup snapshot, stored verbatim; the bytes are never inspected or decoded here.
+                rt.writeState(Http.rawBodyBytes(ex));
+                Http.json(ex, 200, Map.of("ok", true));
+            } else if (path.equals("/api/state") && method.equals("GET")) {
+                // Handed back exactly as stored; no snapshot file at all → 404 not_found.
+                byte[] blob = rt.readState();
+                if (blob == null) {
+                    Http.json(ex, 404, Map.of("error", "not_found"));
+                } else {
+                    Http.rawJson(ex, 200, blob);
+                }
             } else if ((m = P_CONFIG.matcher(path)).matches() && method.equals("POST")) {
                 config(ex, m.group(1));
             } else if ((m = P_START.matcher(path)).matches() && method.equals("POST")) {
