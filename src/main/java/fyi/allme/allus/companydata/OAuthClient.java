@@ -128,12 +128,19 @@ public final class OAuthClient {
      * {@code display_name} is GONE — it is a consented {@code name} claim now, or nothing: ask for
      * {@code new Claim("name", "text")} and read {@code values().get("name")}.
      *
+     * <p>{@code valuesCipher} is an ADDITIVE sibling of {@code values}, keyed by the SAME claim
+     * name: the RAW app-key ciphertext wrapper each plaintext value was decrypted from, exactly as
+     * delivered by userinfo. Lets a caller demonstrate that a value really came from encrypted
+     * delivery. Empty for a mode/claim carrying no ciphertext (signin mode, or plaintext delivery)
+     * — that absence is the honest answer, never a placeholder.
+     *
      * <p>{@code attestations} is an ADDITIVE sibling map keyed by the SAME claim name as
      * {@code values}, present only for a {@code verified} claim under ENCRYPTED delivery. An
      * integration that never reads it behaves exactly as before.
      */
     public record SignInResult(Map<String, String> user, String mode, boolean twoFactor,
-                               Map<String, String> values, Map<String, Attestation> attestations) {
+                               Map<String, String> values, Map<String, Object> valuesCipher,
+                               Map<String, Attestation> attestations) {
     }
 
     /** Optional parameters for {@link #authorizeUrl}. */
@@ -267,14 +274,18 @@ public final class OAuthClient {
         String mode = info.get("mode") instanceof String m ? m : str(token.get("mode"));
         boolean twoFactor = Boolean.TRUE.equals(info.get("two_factor"));
         Map<String, String> values = new LinkedHashMap<>();
+        Map<String, Object> valuesCipher = new LinkedHashMap<>();
         Map<String, Attestation> attestations = new LinkedHashMap<>();
         if (info.get("values") instanceof Map<?, ?> raw && !raw.isEmpty()) {
             values = decryptValues(raw);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> rawCipher = (Map<String, Object>) raw;
+            valuesCipher = rawCipher;
             if (info.get("values_attestation") instanceof Map<?, ?> rawAttest && !rawAttest.isEmpty()) {
                 attestations = decryptAttestations(rawAttest, values);
             }
         }
-        return new SignInResult(user, mode, twoFactor, values, attestations);
+        return new SignInResult(user, mode, twoFactor, values, valuesCipher, attestations);
     }
 
     /**

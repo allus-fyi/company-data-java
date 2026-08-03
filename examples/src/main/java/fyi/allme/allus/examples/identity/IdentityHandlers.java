@@ -475,6 +475,9 @@ public final class IdentityHandlers {
         result.put("mode", out.mode());
         result.put("two_factor", out.twoFactor());
         result.put("values", out.values());
+        // The raw app-key ciphertext each decrypted value above came from — pairs with "values"
+        // by claim name so the panel can show a decrypt actually ran on real bytes.
+        result.put("values_cipher", out.valuesCipher());
 
         if (id == 4) {
             // Connect: read the person's LIVE values via the service data client.
