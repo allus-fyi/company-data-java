@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange;
 
 import fyi.allme.allus.companydata.ApiException;
 import fyi.allme.allus.companydata.Client;
+import fyi.allme.allus.companydata.ConfigException;
 import fyi.allme.allus.companydata.Connection;
 import fyi.allme.allus.companydata.OAuthClient;
 import fyi.allme.allus.companydata.TwoFactorChallenge;
@@ -82,13 +83,10 @@ public final class IdentityHandlers {
     /** Scenarios that build an OAuth consent URL via {@link OAuthClient} (need the authorize base). */
     private static final Set<Integer> OAUTH_URL_SCENARIOS = Set.of(1, 2, 3, 4, 8);
     /**
-     * Scenarios whose {@link OAuthClient#completeSignIn} response can carry claim values (userinfo
-     * {@code values} non-empty) and therefore need the OAuth app private key configured to decrypt them:
-     * mode one_time and mode connect, both delivered as app-key ciphertext through userinfo. Mode signin
-     * (scenarios 1, 2) never carries values; scenario 8 never calls this leg at all; scenario 5 runs the
-     * Nimbus OIDC library instead of this SDK's decrypt path.
+     * Scenarios that persist the OAuth app private key + passphrase, for {@link #completeOidc} and
+     * {@link OAuthClient#completeSignIn} to decrypt userinfo values with.
      */
-    private static final Set<Integer> CLAIM_VALUE_SCENARIOS = Set.of(3, 4);
+    private static final Set<Integer> CLAIM_VALUE_SCENARIOS = Set.of(3, 4, 5);
 
     private static final String DEFAULT_API_URL = "https://api.allme.fyi";
     private static final String DEFAULT_AUTHORIZE_BASE = OAuthClient.DEFAULT_AUTHORIZE_URL; // web.allme.fyi/auth
@@ -141,6 +139,7 @@ public final class IdentityHandlers {
     private static final String CALL_OIDC_AUTH_URL = "(oidc) AuthenticationRequest.toURI — the authorization URL (scope openid profile email, PKCE S256, nonce, state = this run id)";
     private static final String CALL_OIDC_TOKEN = "(oidc) TokenRequest.send — exchanges the code at the discovered token endpoint (client_secret_post + PKCE verifier)";
     private static final String CALL_OIDC_VERIFY = "(oidc) IDTokenValidator.validate — verifies the id_token against the JWKS: signature, issuer, audience and nonce; the claims shown are that verified token's";
+    private static final String CALL_OIDC_USERINFO = "OAuthClient.resolveUserinfo — reads GET /api/oauth/userinfo with the OIDC access token and decrypts every claim value and attestation with the OAuth app private key, for values that never reach the id_token regardless of delivery mode";
 
     private final Runtime rt;
 
@@ -366,6 +365,12 @@ public final class IdentityHandlers {
             } else if (q.get("code") != null && !q.get("code").isEmpty()) {
                 String code = q.get("code");
                 run = (id == 5) ? completeOidc(run, code) : completeSignin(run, code);
+            } else if (q.get("error") != null && !q.get("error").isEmpty()) {
+                // The authorize step can redirect here with an OAuth error instead of a code.
+                // Name it rather than falling through to the generic "missing code" message below.
+                String desc = q.get("error_description");
+                run.put("status", "failed");
+                run.put("error", q.get("error") + (desc != null && !desc.isEmpty() ? ": " + desc : ""));
             } else {
                 run.put("status", "failed");
                 run.put("error", "callback missing code / enrolled");
@@ -502,7 +507,9 @@ public final class IdentityHandlers {
 
     /**
      * Complete an OIDC sign-in (scenario 5) via the Nimbus OIDC library — the id_token is verified
-     * (signature + issuer + audience + nonce) by {@link IDTokenValidator}.
+     * (signature + issuer + audience + nonce) by {@link IDTokenValidator}. Additionally resolves
+     * userinfo through {@link OAuthClient#resolveUserinfo} with the access token Nimbus already
+     * obtained.
      */
     private Map<String, Object> completeOidc(Map<String, Object> run, String code) {
         int id = asInt(run.get("scenario"));
@@ -540,8 +547,40 @@ public final class IdentityHandlers {
             appendCall(run, CALL_OIDC_VERIFY);
             IDTokenClaimsSet claims = validator.validate(idToken, new Nonce(strOr(run.get("nonce"), "")));
 
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("claims", claims.toJSONObject());
+            result.put("values", new LinkedHashMap<>());
+            result.put("values_cipher", new LinkedHashMap<>());
+            result.put("attestations", new LinkedHashMap<>());
+            result.put("values_gap", null);
+
+            com.nimbusds.oauth2.sdk.token.AccessToken accessToken = success.getOIDCTokens().getAccessToken();
+            if (accessToken != null && !accessToken.getValue().isEmpty()) {
+                appendCall(run, CALL_IDW_BUILD);
+                OAuthClient oauth = oauthClientFor(id);
+                appendCall(run, CALL_OIDC_USERINFO);
+                try {
+                    OAuthClient.SignInResult resolved = oauth.resolveUserinfo(accessToken.getValue(), null);
+                    Map<String, String> values = new LinkedHashMap<>(resolved.values());
+                    // A `verified: false` attestation is a MISMATCH between the delivered value
+                    // and what was verified — the value must be rejected, never shown as though
+                    // it answered the claim.
+                    for (Map.Entry<String, OAuthClient.Attestation> e : resolved.attestations().entrySet()) {
+                        if (!e.getValue().verified()) {
+                            values.remove(e.getKey());
+                        }
+                    }
+                    result.put("values", values);
+                    result.put("values_cipher", resolved.valuesCipher());
+                    result.put("attestations", resolved.attestations());
+                } catch (ConfigException e) {
+                    result.put("values_gap",
+                        "userinfo carried claim value(s) that could not be decrypted: " + e.getMessage());
+                }
+            }
+
             run.put("status", "done");
-            run.put("result", Map.of("claims", claims.toJSONObject()));
+            run.put("result", result);
             return run;
         } catch (RuntimeException e) {
             throw e;

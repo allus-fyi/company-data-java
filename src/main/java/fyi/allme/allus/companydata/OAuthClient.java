@@ -267,11 +267,25 @@ public final class OAuthClient {
         if (!(accessToken instanceof String at) || at.isEmpty()) {
             throw new AuthException("token exchange returned no access_token");
         }
-        Map<String, Object> info = userinfo(at);
+        return resolveUserinfo(at, str(token.get("mode")));
+    }
+
+    /**
+     * Read + decrypt userinfo for an access token ALREADY held — the second half of
+     * {@link #completeSignIn}, split out so a caller that obtained its access token through its own
+     * separate exchange can still resolve and decrypt the claim values. Config-only key handling
+     * still holds — the caller passes no key/passphrase, only the token it already has; the private
+     * key is read from config exactly as {@link #completeSignIn} does.
+     *
+     * <p>Re-exchanging the code here would be wrong (a second exchange either mints a second grant
+     * or fails outright), so this method never does the exchange — only the read + decrypt.
+     */
+    public SignInResult resolveUserinfo(String accessToken, String fallbackMode) {
+        Map<String, Object> info = userinfo(accessToken);
         Map<String, String> user = new LinkedHashMap<>();
         user.put("sub", str(info.get("sub")));
         user.put("share_code", str(info.get("share_code")));
-        String mode = info.get("mode") instanceof String m ? m : str(token.get("mode"));
+        String mode = info.get("mode") instanceof String m ? m : fallbackMode;
         boolean twoFactor = Boolean.TRUE.equals(info.get("two_factor"));
         Map<String, String> values = new LinkedHashMap<>();
         Map<String, Object> valuesCipher = new LinkedHashMap<>();
