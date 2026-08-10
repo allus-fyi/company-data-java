@@ -50,6 +50,7 @@ public final class Server {
     private static final Pattern P_CONFIG = Pattern.compile("^/api/scenarios/([\\w:.\\-]+)/config$");
     private static final Pattern P_START = Pattern.compile("^/api/scenarios/([\\w:.\\-]+)/start$");
     private static final Pattern P_ENROLL = Pattern.compile("^/api/scenarios/([\\w:.\\-]+)/enroll$");
+    private static final Pattern P_CLEANUP = Pattern.compile("^/api/scenarios/([\\w:.\\-]+)/cleanup$");
     private static final Pattern P_CLEAR = Pattern.compile("^/api/scenarios/([\\w:.\\-]+)/clear$");
     private static final Pattern P_RUN = Pattern.compile("^/api/runs/([0-9a-f]{32})$");
 
@@ -112,6 +113,8 @@ public final class Server {
                 start(ex, m.group(1));
             } else if ((m = P_ENROLL.matcher(path)).matches() && method.equals("POST")) {
                 enroll(ex, m.group(1));
+            } else if ((m = P_CLEANUP.matcher(path)).matches() && method.equals("POST")) {
+                cleanup(ex, m.group(1));
             } else if ((m = P_CLEAR.matcher(path)).matches() && method.equals("POST")) {
                 clear(ex, m.group(1));
             } else if ((m = P_RUN.matcher(path)).matches() && method.equals("GET")) {
@@ -167,6 +170,15 @@ public final class Server {
     private void enroll(HttpExchange ex, String id) throws IOException {
         if ("identity".equals(family(id))) {
             identity.enroll(ex, Integer.parseInt(id));
+        } else {
+            Http.json(ex, 404, Map.of("error", "not_found"));
+        }
+    }
+
+    /** Cleanup is a company-data-only leg (companydata:documents). */
+    private void cleanup(HttpExchange ex, String id) throws IOException {
+        if ("companydata".equals(family(id))) {
+            companyData.cleanup(ex, id);
         } else {
             Http.json(ex, 404, Map.of("error", "not_found"));
         }

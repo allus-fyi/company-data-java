@@ -69,6 +69,8 @@ public final class CompanyDataHandlers {
     private static final String CALL_REQUEST_FIELDS = "Client.requestFields — GET /api/company-data/request-fields: your own request-field catalog, fetched once and cached for the life of the client";
     private static final String CALL_PROCESS_CHANGES = "Client.processChanges — drains the change feed through the crash-safe pump: handler before ack, at-least-once (dedup on Change.id), failures to the local dead-letter store";
     private static final String CALL_CREATE_DOCUMENT = "Client.createDocument — %s";
+    private static final String CALL_LIST_DOCUMENTS = "Client.listDocuments — GET /api/company-data/documents: pages the service's documents so cleanup finds everything it created";
+    private static final String CALL_DELETE_DOCUMENT = "Client.deleteDocument — DELETE /api/company-data/documents/%s";
     private static final String CALL_WEBHOOK_STARTED = "(webhook run started) — POST /webhook receives each delivery; every poll also drains the change feed as a fallback";
     private static final String CALL_VERIFY_WEBHOOK = "Client.verifyWebhook — checks the delivery's X-Allus-Signature HMAC against the secret configured for its X-Allus-Webhook-Id; a failure answers 401";
     private static final String CALL_PARSE_WEBHOOK = "Client.parseWebhook — turns the verified body into a typed Change, decrypting its value with the service key";
@@ -370,6 +372,45 @@ public final class CompanyDataHandlers {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("docs", docs);
+        return out;
+    }
+
+    // ── POST /api/scenarios/{id}/cleanup (companydata:documents only) ──────────
+
+    /**
+     * Delete every document the documents scenario has created on this service, so a reused account
+     * can reset between runs — companydata:documents is additive (createDocument mints a new document
+     * each run; nothing deletes a prior run's). Not routed through the generic dispatch: called
+     * directly by the server, the same way enroll is identity-only.
+     */
+    public void cleanup(HttpExchange ex, String id) throws IOException {
+        if (!DOCUMENTS.equals(id)) {
+            Http.json(ex, 404, Map.of("error", "not_found"));
+            return;
+        }
+        if (!rt.hasConfig(id)) {
+            Http.json(ex, 409, Map.of("error", "not_configured"));
+            return;
+        }
+        dataRun(ex, id, this::doCleanupDocuments);
+    }
+
+    private Map<String, Object> doCleanupDocuments(Client client, List<String> calls) {
+        int deleted = 0;
+        while (true) {
+            calls.add(CALL_LIST_DOCUMENTS);
+            List<Document> page = client.listDocuments(null, null, 100, 0);
+            if (page.isEmpty()) {
+                break;
+            }
+            for (Document doc : page) {
+                calls.add(String.format(CALL_DELETE_DOCUMENT, doc.id()));
+                client.deleteDocument(doc.id());
+                deleted++;
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", deleted);
         return out;
     }
 
