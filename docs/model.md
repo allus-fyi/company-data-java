@@ -14,9 +14,11 @@ Returned by `client.requestFields()`.
 record RequestField(
     String  slug,       // the stable, company-set key — the contract for value access
     String  label,      // the human label (rename freely; the slug stays)
-    String  type,       // email|phone|url|text|address|bank|creditcard|date|date_of_birth|photo|document|legal_document
+    String  type,       // email|phone|url|text|address|bank|creditcard|date|date_of_birth|photo|document|legal_document|passport|photo_id|drivers_license
     boolean oneTime,    // a one-time snapshot vs a live (auto-updating) answer
     boolean mandatory,  // mandatory-to-provide OR mandatory-to-stay-connected (the API's two flags, folded)
+    boolean verified,   // this row DEMANDS a verified answer (mutually exclusive with oneTime)
+    Integer verifiedMaxAgeDays, // oldest verification accepted; null = no age limit
     Map<String, Object> raw
 ) {}
 ```
@@ -51,6 +53,9 @@ record Value(
     Object value,                  // typed plaintext (see below)
     boolean live,                  // true = "keep connected" (auto-updates); false = one-time snapshot
     OffsetDateTime updatedAt,      // when this answer last changed
+    boolean verified,              // the hash recomputes over the plaintext AND the verification has not lapsed
+    OffsetDateTime verifiedAt,        // when the answering field was verified
+    OffsetDateTime verifiedExpiresAt, // when that verification lapses; null = it does not
     Map<String, Object> raw
 ) {}
 ```
@@ -65,7 +70,7 @@ Typed convenience casts: `asString()`, `asObject()` (Map), `asBinary()`
 | `email`, `phone`, `url`, `text` | `String` | The decrypted plaintext. |
 | `address`, `bank`, `creditcard` | `Map<String,Object>` | The decrypted plaintext is a JSON object → parsed. A non-JSON structured value throws `DecryptException`. |
 | `date`, `date_of_birth` | `java.time.LocalDate` | Parsed from ISO `YYYY-MM-DD` (the leading 10 chars); falls back to the raw `String` if unparseable. |
-| `photo`, `document`, `legal_document` | `BinaryHandle` | Lazy — nothing fetched/decrypted until `.bytes()`/`.save()`. |
+| `photo`, `document`, `legal_document`, `passport`, `photo_id`, `drivers_license` | `BinaryHandle` | Lazy — nothing fetched/decrypted until `.bytes()`/`.save()`. The last three are ID-document subtypes of `legal_document` and share its envelope. |
 | unanswered / no value | `null` | The slot has no answer. |
 
 ## `BinaryHandle`
@@ -132,6 +137,9 @@ record Change(
     String  messageId,       // message_received only — the ack boundary
     String  personPublicKey, // message_received only — base64 SPKI for the reply
     String  messageBody,     // message_received only — the DECRYPTED text
+    boolean verified,      // field_updated only; hash recomputes AND the verification has not lapsed
+    OffsetDateTime verifiedAt,        // when the answering field was verified
+    OffsetDateTime verifiedExpiresAt, // when that verification lapses; null = it does not
     OffsetDateTime at,     // the change time (no separate updatedAt on a change)
     Map<String, Object> raw
 ) {}

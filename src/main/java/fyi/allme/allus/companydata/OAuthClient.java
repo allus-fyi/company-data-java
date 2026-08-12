@@ -2,6 +2,7 @@ package fyi.allme.allus.companydata;
 
 import fyi.allme.allus.companydata.internal.JdkTransport;
 import fyi.allme.allus.companydata.internal.Json;
+import fyi.allme.allus.companydata.internal.Parse;
 import fyi.allme.allus.companydata.internal.Transport;
 
 import java.io.IOException;
@@ -32,7 +33,10 @@ public final class OAuthClient {
     /** The hosted consent surface. Native apps claim this https link; web is the fallback. */
     public static final String DEFAULT_AUTHORIZE_URL = "https://web.allme.fyi/auth";
 
-    private static final Set<String> NON_CLAIMABLE = Set.of("photo", "document", "legal_document");
+    // Binary field types can't be requested as claims — the ID-document subtypes are binary too,
+    // so no ID document ever reaches this surface.
+    private static final Set<String> NON_CLAIMABLE = Set.of(
+        "photo", "document", "legal_document", "passport", "photo_id", "drivers_license");
     private static final int MAX_CLAIMS = 15;
     private static final Set<String> MODES = Set.of("signin", "one_time", "connect", "2fa_enroll");
     private static final Set<String> RESPONSE_MODES = Set.of("redirect", "detached");
@@ -91,11 +95,25 @@ public final class OAuthClient {
      * and only for a type this SDK can cryptographically attest (v1: {@code email}). Sending it on a {@code one_time}
      * request is refused with {@code invalid_request} — that leg carries no source row id, so the
      * server could neither enforce the requirement nor attest it.
+     *
+     * <p>{@code verifiedMaxAgeDays} narrows that demand to a RECENT verification. The app's
+     * registered configuration is a FLOOR and a request may only TIGHTEN it: the effective limit is
+     * the minimum of the two stated ages, and an omitted age tightens nothing — which is why null
+     * sends nothing at all rather than an explicit null. Below 1 is refused at the call.
      */
     public record Claim(String name, String type, String suggest, boolean required,
-                        boolean verified, String label) {
+                        boolean verified, String label, Integer verifiedMaxAgeDays) {
         public Claim(String name, String type) {
-            this(name, type, null, false, false, null);
+            this(name, type, null, false, false, null, null);
+        }
+
+        /**
+         * Without an age limit — the shape every claim had before {@code verifiedMaxAgeDays}
+         * existed, kept so a claim that states no age needs no null argument.
+         */
+        public Claim(String name, String type, String suggest, boolean required,
+                     boolean verified, String label) {
+            this(name, type, suggest, required, verified, label, null);
         }
     }
 
@@ -113,11 +131,16 @@ public final class OAuthClient {
      *
      * <p>{@code verifiedAt} carries the snapshot caveat: it attests the value as verified AT THAT
      * MOMENT, not verified today. A field loses its verification whenever the person re-saves it.
+     * {@code verifiedExpiresAt} is when that verification lapses on its own (a document-backed
+     * verification dies with the document); an EXPIRED attestation is unverified, so
+     * {@code verified} already reads false once it has passed.
      *
      * @param hash lowercase hex
      * @param salt lowercase hex
+     * @param verifiedExpiresAt when the verification lapses; null when it does not
      */
-    public record Attestation(boolean verified, String hash, String salt, String verifiedAt) {
+    public record Attestation(boolean verified, String hash, String salt, String verifiedAt,
+                              String verifiedExpiresAt) {
     }
 
     /**
@@ -222,6 +245,15 @@ public final class OAuthClient {
             }
             if (c.verified()) {
                 entry.put("verified", true);
+            }
+            if (c.verifiedMaxAgeDays() != null) {
+                // Refused HERE for the same reason a nameless claim is: the API rejects the whole
+                // request over it, and the integration error belongs at the call that made it.
+                if (c.verifiedMaxAgeDays() < 1) {
+                    throw new ConfigException(
+                        "claim '" + name + "': verifiedMaxAgeDays must be at least 1");
+                }
+                entry.put("verified_max_age_days", c.verifiedMaxAgeDays());
             }
             if (c.label() != null && !c.label().isEmpty()) {
                 entry.put("label", c.label());
@@ -341,13 +373,21 @@ public final class OAuthClient {
                 continue;
             }
             String verifiedAt = str(obj.get("verified_at"));
+            Object expiresAt = obj.get("verified_expires_at");
+            String verifiedExpiresAt = str(expiresAt);
+            if (verifiedExpiresAt != null && verifiedExpiresAt.isEmpty()) {
+                verifiedExpiresAt = null;
+            }
             out.put(slug, new Attestation(
                 // Recomputed here, constant-time, over the plaintext just decrypted — never trusted
                 // from the server. false = the delivered value is NOT the verified one; reject it.
-                Crypto.hashMatches(salt, hash, plaintext),
+                // An attestation whose expiry has passed attests nothing today, so it reads false
+                // as well: an expired attestation is unverified, not "not attested".
+                Crypto.hashMatches(salt, hash, plaintext) && !Parse.expiryPassed(expiresAt),
                 hash,
                 salt,
-                verifiedAt == null ? "" : verifiedAt));
+                verifiedAt == null ? "" : verifiedAt,
+                verifiedExpiresAt));
         }
         return out;
     }

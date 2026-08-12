@@ -20,7 +20,18 @@ public record Value(
     Object value,
     boolean live,
     OffsetDateTime updatedAt,
+    /** True iff the hash recomputes over the plaintext AND the verification has not lapsed. */
     boolean verified,
+    /**
+     * When the person's answering field was verified; null when the value carries no verification.
+     * A stamp, not a promise about today — read it with {@link #verified()}.
+     */
+    OffsetDateTime verifiedAt,
+    /**
+     * When that verification lapses (a document-backed verification dies with the document); null =
+     * it does not lapse. Past → {@link #verified()} reads false.
+     */
+    OffsetDateTime verifiedExpiresAt,
     Map<String, Object> raw
 ) {
     static Value fromApi(Map<String, Object> entry, String fieldType, ModelDeps deps) {
@@ -28,15 +39,30 @@ public record Value(
         Object updatedRaw = entry.containsKey("updatedAt") ? entry.get("updatedAt") : entry.get("updated_at");
         OffsetDateTime updatedAt = Parse.isoDateTime(updatedRaw);
         Object typed = deps.typedValue(entry, fieldType);
-        return new Value(typed, live, updatedAt, verifiedFrom(entry, typed), entry);
+        return new Value(
+            typed,
+            live,
+            updatedAt,
+            verifiedFrom(entry, typed),
+            Parse.isoDateTime(entry.get("verified_at")),
+            Parse.isoDateTime(entry.get("verified_expires_at")),
+            entry);
     }
 
-    /** Recompute the verified flag from the just-decrypted plaintext (email String only). */
+    /**
+     * Recompute the verified flag from the just-decrypted plaintext (text values only).
+     *
+     * <p>Two conditions, both required: the hash recomputes over the exact plaintext, AND the
+     * verification has not lapsed ({@code verified_expires_at} absent or still in the future). A
+     * document-backed verification lapses when the document itself expires, so a stale binding
+     * reads false here without any lookup.
+     */
     static boolean verifiedFrom(Map<String, Object> obj, Object plaintext) {
         if (!(plaintext instanceof String pt)) return false;
         String vhash = Parse.str(obj.get("verified_hash"));
         String vsalt = Parse.str(obj.get("verified_salt"));
         if (vhash == null || vhash.isEmpty() || vsalt == null || vsalt.isEmpty()) return false;
+        if (Parse.expiryPassed(obj.get("verified_expires_at"))) return false;
         return Crypto.hashMatches(vsalt, vhash, pt);
     }
 

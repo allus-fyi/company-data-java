@@ -45,7 +45,9 @@ public record Change(
     String messageId,       // set on message_received — the ack boundary (upToMessageId)
     String personPublicKey, // set on message_received — base64 SPKI to encrypt the reply to
     String messageBody,     // set on message_received — the DECRYPTED message text
-    boolean verified, // true iff a field_updated value is verified (hash matches the decrypted plaintext)
+    boolean verified, // true iff a field_updated value's hash matches AND the verification has not lapsed
+    OffsetDateTime verifiedAt,        // when the answering field was verified; null when unverified
+    OffsetDateTime verifiedExpiresAt, // when that verification lapses; null = it does not
     OffsetDateTime at,
     Map<String, Object> raw
 ) {
@@ -108,7 +110,10 @@ public record Change(
             Parse.str(obj.get("share_code")), Parse.str(obj.get("customer_type")), slug, value, live,
             documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate, requestId,
             publicKeySha256, connectionId, messageId, personPublicKey, messageBody,
-            Value.verifiedFrom(obj, value), Parse.isoDateTime(obj.get("at")), obj);
+            Value.verifiedFrom(obj, value),
+            Parse.isoDateTime(obj.get("verified_at")),
+            Parse.isoDateTime(obj.get("verified_expires_at")),
+            Parse.isoDateTime(obj.get("at")), obj);
     }
 
     /** Parse the {@code /changes} response → a list of typed Change events. */

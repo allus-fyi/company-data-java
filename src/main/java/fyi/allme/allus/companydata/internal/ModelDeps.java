@@ -28,8 +28,12 @@ public record ModelDeps(
 ) {
     /** Field types whose decrypted plaintext is a JSON object → a parsed Map. */
     public static final List<String> STRUCTURED_TYPES = List.of("address", "bank", "creditcard");
-    /** Field types whose value is a lazy binary handle (served as a value_url). */
-    public static final List<String> BINARY_TYPES = List.of("photo", "document", "legal_document");
+    /**
+     * Field types whose value is a lazy binary handle (served as a value_url). The ID-document
+     * subtypes are children of {@code legal_document} and share its envelope.
+     */
+    public static final List<String> BINARY_TYPES = List.of(
+        "photo", "document", "legal_document", "passport", "photo_id", "drivers_license");
     /** Field types whose decrypted plaintext is an ISO date. */
     public static final List<String> DATE_TYPES = List.of("date", "date_of_birth");
 

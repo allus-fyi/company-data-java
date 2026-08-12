@@ -21,6 +21,17 @@ public record RequestField(
     boolean mandatory,
     /** Which customer TYPE this row applies to: "person"|"company"|"both" (B2B); null on older API. */
     String audience,
+    /**
+     * This row DEMANDS a verified answer: only a value the person verified satisfies it, and an
+     * unverified candidate is refused at the accepting act rather than downgraded.
+     */
+    boolean verified,
+    /**
+     * The oldest verification the demand accepts, in days; null = no age limit. Enforced at the
+     * accepting act only — a standing live link is not re-enforced afterwards, so apply your own
+     * policy from each {@link Value#verifiedAt()}.
+     */
+    Integer verifiedMaxAgeDays,
     Map<String, Object> raw
 ) {
     static RequestField fromApi(Map<String, Object> obj) {
@@ -31,6 +42,8 @@ public record RequestField(
             Parse.bool(obj.get("one_time")),
             Parse.bool(obj.get("mandatory_provide")) || Parse.bool(obj.get("mandatory_connected")),
             Parse.str(obj.get("audience")),
+            Parse.bool(obj.get("verified")),
+            Parse.intOrNull(obj.get("verified_max_age_days")),
             obj);
     }
 

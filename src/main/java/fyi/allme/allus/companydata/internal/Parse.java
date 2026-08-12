@@ -30,6 +30,43 @@ public final class Parse {
         }
     }
 
+    /**
+     * Whether a verification expiry stamp has already passed.
+     *
+     * <p>Absent → false: a verification with no expiry never lapses. Present but unparseable →
+     * true: an expiry that cannot be evaluated cannot be used to claim the value is still verified
+     * today.
+     */
+    public static boolean expiryPassed(Object value) {
+        if (value == null || String.valueOf(value).isBlank()) {
+            return false;
+        }
+        OffsetDateTime when = isoDateTime(value);
+        if (when == null) {
+            return true;
+        }
+        return !when.isAfter(OffsetDateTime.now(when.getOffset()));
+    }
+
+    /** Coerce a JSON number or an XML numeric string into an Integer, or null when absent. */
+    public static Integer intOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        String s = String.valueOf(value).trim();
+        if (s.isEmpty()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(s);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
     /** Parse an ISO date (first 10 chars) → LocalDate, or null. */
     public static LocalDate isoDate(String value) {
         if (value == null) {
