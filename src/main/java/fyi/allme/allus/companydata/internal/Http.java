@@ -20,6 +20,10 @@ import java.util.function.LongSupplier;
  *       {@code {api_url}/oauth2/token} and caches the bearer token + expiry.
  *       Refresh is automatic; a 401 mid-flight triggers exactly one
  *       refresh-and-retry, then {@link AuthException}.</li>
+ *   <li><b>Region</b> — the configured {@code api_url} is the global front door and
+ *       the token is minted at the client's home region, whose base the token
+ *       response returns as {@code api_url}. Every call other than the token request
+ *       and the region list is sent to that home base. See {@link #rebaseTo}.</li>
  *   <li><b>Format</b> — sets {@code Accept} per {@code config.format()}
  *       (json/xml) and parses the body accordingly (XML is XXE-safe via {@link Xml}).</li>
  *   <li><b>Errors</b> — maps non-2xx to the error taxonomy: 401 → refresh+retry then
@@ -39,13 +43,23 @@ public final class Http {
     private static final double DEFAULT_BACKOFF_S = 1.0;
     private static final double MAX_BACKOFF_S = 60.0;
 
+    /** The response member (token success body and 421 refusal body alike) naming the home-region base. */
+    private static final String REGION_BASE_MEMBER = "api_url";
+    /** The front door's refusal of a data route: rebase to the named base and replay. */
+    private static final String REBASE_ERROR_KEY = "region.rebase_required";
+
     private final Config config;
     private final Transport transport;
     private final DoubleConsumer sleep;     // seconds
     private final LongSupplier clockNanos;  // monotonic nanos
     private final int maxRetries429;
 
-    private final String apiUrl;
+    /**
+     * The base every request goes to, including the token request. Starts at the configured
+     * value; every rebase moves it. Clients do not validate a server-returned base against
+     * anything — they store it and use it.
+     */
+    private String apiUrl;
     private String token;
     private double tokenExpiryS = 0.0; // monotonic-seconds deadline
 
@@ -89,6 +103,14 @@ public final class Http {
         return token != null && nowS() < tokenExpiryS;
     }
 
+    /**
+     * POST the client credentials to {@code /oauth2/token} and cache the result.
+     *
+     * <p>Goes to the CURRENT base, exactly like every other call — once a token response has
+     * named a home base, subsequent token requests go there too, the same as the data calls
+     * they sit beside. The configured value is only the starting point, for the first call of
+     * a process and the fallback when nothing has been stored yet.
+     */
     private String fetchToken() {
         String url = apiUrl + "/oauth2/token";
         Map<String, String> form = new LinkedHashMap<>();
@@ -123,7 +145,33 @@ public final class Http {
         }
         this.token = String.valueOf(accessToken);
         this.tokenExpiryS = nowS() + Math.max(0.0, expiresIn - TOKEN_EXPIRY_SKEW_S);
+        // The token is minted at the client's home region and only validates there, so the
+        // base the response names is where every company-data call must go from here on.
+        rebaseTo(body.get(REGION_BASE_MEMBER));
         return this.token;
+    }
+
+    // ── region ────────────────────────────────────────────────────────────
+
+    /**
+     * Point subsequent requests — including the next token request — at {@code candidate}.
+     *
+     * <p>Returns {@code true} only when the base actually MOVED. A candidate that is absent,
+     * not a string, empty, or equal to the current base is not stored and returns
+     * {@code false}. Nothing here validates the candidate against a fetched region list: the
+     * SDK stores the base the server names and uses it, exactly as every first-party client
+     * does.
+     */
+    private boolean rebaseTo(Object candidate) {
+        if (!(candidate instanceof String s)) {
+            return false;
+        }
+        String base = stripTrailingSlash(s.strip());
+        if (base.isEmpty() || base.equals(apiUrl)) {
+            return false;
+        }
+        this.apiUrl = base;
+        return true;
     }
 
     private String bearer(boolean forceRefresh) {
@@ -203,7 +251,6 @@ public final class Http {
     private Object request(String method, String path, Map<String, String> params,
                            Object jsonBody, byte[] rawBody, String contentType,
                            boolean raw, boolean wantResponse) {
-        String url = url(path);
         boolean wantsXml = "xml".equals(config.format());
         String accept = wantsXml ? "application/xml" : "application/json";
 
@@ -217,7 +264,10 @@ public final class Http {
 
         int retries429 = 0;
         boolean refreshed401 = false;
+        boolean rebased421 = false;
         while (true) {
+            // Resolved per attempt: a 421 rebase moves the base under the next one.
+            String url = url(path);
             String tok = bearer(false);
             Map<String, String> headers = new LinkedHashMap<>();
             headers.put("Authorization", "Bearer " + tok);
@@ -251,6 +301,19 @@ public final class Http {
                 throw new AuthException("unauthorized after token refresh"
                     + (err.errorKey() != null ? " [" + err.errorKey() + "]" : "")
                     + (err.message() != null ? ": " + err.message() : ""));
+            }
+
+            if (status == 421) {
+                // The front door serves no data route: it names the caller's home base and
+                // expects the call there. Rebase once and replay; a second 421 surfaces.
+                ErrorBody err = extractError(resp);
+                if (!rebased421
+                    && REBASE_ERROR_KEY.equals(err.errorKey())
+                    && rebaseTo(err.details().get(REGION_BASE_MEMBER))) {
+                    rebased421 = true;
+                    continue;
+                }
+                throw new ApiException(status, err.errorKey(), err.message(), err.details());
             }
 
             if (status == 429) {
