@@ -52,6 +52,7 @@ public final class Client {
     private static final String LOGS = BASE + "/logs";
     private static final String DOCUMENTS = BASE + "/documents";
     private static final String CONNECT_REQUESTS = BASE + "/connect-requests";
+    private static final String BROADCAST = BASE + "/broadcast"; // POST — one plaintext message to every connection
     private static final String FLOWS = BASE + "/flows";          // POST /flows/{flowId}/runs
     private static final String FLOW_RUNS = BASE + "/flow-runs";  // list / get / answers / generate
     private static final String KEYS = "/api/keys";
@@ -816,6 +817,129 @@ public final class Client {
             throw new ApiException(0, "company_connections.request_failed", "no request_id in response");
         }
         return rid;
+    }
+
+    // ── messaging (company ↔ person) ────────────────────────────────────────────
+
+    /**
+     * Send a 1-on-1 message to the connected person → the new message_id.
+     *
+     * <p>{@code POST /api/company-data/connections/{connectionId}/messages}. The message is
+     * end-to-end encrypted before it leaves the process: one copy for the PERSON ({@code body})
+     * and one for the SERVICE ({@code sender_body}), so the person reads it in their app and this
+     * service can re-read its own outbound text. The platform stores ciphertext only. The route
+     * answers 201 with the created message carrying {@code message_id} — the acknowledgement
+     * boundary {@link #markMessagesRead} takes.
+     *
+     * <p>{@code personPublicKey} is the base64 SPKI carried on the {@code message_received}
+     * event — pass it to answer without a second key lookup. Pass {@code null} and the key is
+     * resolved from the connection's {@code share_code} (or an explicit {@code shareCode}).
+     * Config-only key handling is unchanged: a recipient PUBLIC key is neither a secret nor a
+     * configured key.
+     *
+     * <p>Refusals arrive as {@link ApiException} with the platform error_key:
+     * {@code messages.messaging_not_entitled} / {@code messages.messaging_suspended} /
+     * {@code messages.not_connected} (403), {@code messages.encryption_required} (400),
+     * {@code messages.rate_limited} (429).
+     */
+    public String sendMessage(String connectionId, String text, String personPublicKey, String shareCode) {
+        String cid = connectionId == null ? "" : connectionId.trim();
+        if (cid.isEmpty()) {
+            throw new ConfigException("connectionId is required");
+        }
+        if (text == null || text.isBlank()) {
+            throw new ConfigException("text is required");
+        }
+
+        java.security.interfaces.RSAPublicKey personKey =
+            (personPublicKey != null && !personPublicKey.isEmpty())
+                ? Crypto.loadPublicKey(personPublicKey)
+                : recipientPublicKey(shareCode != null ? shareCode : resolveShareCode(cid, null));
+
+        // Both copies travel as JSON STRINGS — the message columns are text and the API tells
+        // ciphertext from plaintext by looking for the wrapper marker.
+        Map<String, Object> body = Map.of(
+            "body", Json.write(Crypto.encryptForPublicKey(text, personKey)),
+            "sender_body", Json.write(Crypto.encryptForPublicKey(text, servicePublicKey())));
+        Object res = http.post(CONNECTIONS + "/" + cid + "/messages", body);
+        String mid = messageIdOf(res);
+        if (mid == null) {
+            throw new ApiException(0, "messages.send_failed", "no message_id in response");
+        }
+        return mid;
+    }
+
+    /** {@link #sendMessage(String, String, String, String)} with no key hint — the key is resolved. */
+    public String sendMessage(String connectionId, String text) {
+        return sendMessage(connectionId, text, null, null);
+    }
+
+    /**
+     * Send one PLAINTEXT message to every person connected to this service.
+     *
+     * <p>{@code POST /api/company-data/broadcast}. A broadcast is deliberately not encrypted — one
+     * body cannot be single-key-encrypted to every connection — so it is the one message the
+     * platform can read, exactly as a broadcast document is. It seeds each recipient's ordinary
+     * 1-on-1 thread, and a reply comes back end-to-end encrypted as a {@code message_received}
+     * event.
+     *
+     * <p>Returns the API response. Refusals arrive as {@link ApiException}:
+     * {@code messages.broadcast_audience_too_large} (422, over the connection cap),
+     * {@code messages.broadcast_suspended} / {@code messages.messaging_suspended} /
+     * {@code messages.messaging_not_entitled} (403).
+     */
+    public Object broadcastMessage(String text) {
+        if (text == null || text.isBlank()) {
+            throw new ConfigException("text is required");
+        }
+        return http.post(BROADCAST, Map.of("body", text));
+    }
+
+    /**
+     * Acknowledge the inbound messages this service has handled, up to a boundary.
+     *
+     * <p>{@code POST /api/company-data/connections/{connectionId}/messages/read} with
+     * {@code {up_to_message_id}}. Only the person's messages on THIS connection at or before that
+     * message are marked read; one that arrived while the service was working stays unread, so
+     * nothing is swept unhandled. Idempotent — a repeat is a no-op.
+     *
+     * <p>Sending a reply does NOT acknowledge anything; a service that never acks lets its unread
+     * grow. The boundary must be a message the PERSON sent on this connection: anything else is
+     * refused with {@link ApiException} {@code company_data.ack_boundary_invalid} (400).
+     */
+    public void markMessagesRead(String connectionId, String upToMessageId) {
+        String cid = connectionId == null ? "" : connectionId.trim();
+        if (cid.isEmpty()) {
+            throw new ConfigException("connectionId is required");
+        }
+        String boundary = upToMessageId == null ? "" : upToMessageId.trim();
+        if (boundary.isEmpty()) {
+            throw new ConfigException("upToMessageId is required");
+        }
+        http.post(CONNECTIONS + "/" + cid + "/messages/read", Map.of("up_to_message_id", boundary));
+    }
+
+    /**
+     * Pull the new message's id out of a send response — at the top level or nested under
+     * {@code message}, and under either {@code message_id} or {@code id}.
+     */
+    @SuppressWarnings("unchecked")
+    private static String messageIdOf(Object body) {
+        if (!(body instanceof Map<?, ?> m)) {
+            return null;
+        }
+        Map<String, Object> obj = (Map<String, Object>) m;
+        if (obj.get("message") instanceof Map<?, ?> inner) {
+            obj = (Map<String, Object>) inner;
+        }
+        Object mid = obj.get("message_id");
+        if (mid == null) {
+            mid = obj.get("id");
+        }
+        if (mid == null || String.valueOf(mid).isEmpty()) {
+            return null;
+        }
+        return String.valueOf(mid);
     }
 
     // ── contract-flow runs (company side — the company is a bound party) ─────────

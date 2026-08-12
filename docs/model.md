@@ -128,6 +128,10 @@ record Change(
     String  slug,          // field_updated/field_deleted/consent_* only (else null)
     Object  value,         // field_updated only; typed exactly like Value.value() (else null)
     Boolean live,          // field_updated only (else null)
+    String  connectionId,    // message_received only — the connection to reply/ack on
+    String  messageId,       // message_received only — the ack boundary
+    String  personPublicKey, // message_received only — base64 SPKI for the reply
+    String  messageBody,     // message_received only — the DECRYPTED text
     OffsetDateTime at,     // the change time (no separate updatedAt on a change)
     Map<String, Object> raw
 ) {}
@@ -142,6 +146,14 @@ record Change(
 | `field_updated` | `slug` + decrypted `value` (+ `live`); binary → a lazy `BinaryHandle` |
 | `field_deleted` | `slug`, no value |
 | `consent_accepted` / `consent_declined` | `slug` |
+| `message_received` | `connectionId`, `messageId`, `personPublicKey` + `messageBody` (the DECRYPTED message text); no slot. Person→company only — a broadcast raises no event |
+
+The event's ciphertext is carried under `body`. It is never `value`: on every other
+event `value` means field ciphertext, and a message body is not one.
+
+**Answering one.** `sendMessage` answers **201** with the created message carrying
+`message_id`, which is what it returns — hand that id, or the inbound event's `messageId`,
+to `markMessagesRead` as the acknowledgement boundary.
 
 `Change.id()` is captured before the server's drain-delete, so it survives a
 crash + replay unchanged — dedup on it.

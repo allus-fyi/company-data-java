@@ -41,6 +41,10 @@ public record Change(
     String cancelEffectiveDate, // set on a cancelled document_status_changed: ISO date the cancellation takes effect
     String requestId, // set on connection_request_accepted | connection_request_rejected
     String publicKeySha256, // set on key_rotated — SHA-256 fingerprint of the person's NEW public key
+    String connectionId,    // set on message_received — the connection to reply/acknowledge on
+    String messageId,       // set on message_received — the ack boundary (upToMessageId)
+    String personPublicKey, // set on message_received — base64 SPKI to encrypt the reply to
+    String messageBody,     // set on message_received — the DECRYPTED message text
     boolean verified, // true iff a field_updated value is verified (hash matches the decrypted plaintext)
     OffsetDateTime at,
     Map<String, Object> raw
@@ -82,11 +86,29 @@ public record Change(
         String publicKeySha256 = "key_rotated".equals(event)
             ? Parse.str(obj.get("public_key_sha256")) : null;
 
+        // message_received carries the connection to answer on, the ack boundary, the person's
+        // public key for the reply, and the message ciphertext itself; its created_at stays in raw.
+        boolean isMessage = "message_received".equals(event);
+        String connectionId = isMessage ? Parse.str(obj.get("connection_id")) : null;
+        String messageId = isMessage ? Parse.str(obj.get("message_id")) : null;
+        String personPublicKey = isMessage ? Parse.str(obj.get("person_public_key")) : null;
+        String messageBody = null;
+        if (isMessage) {
+            // The message ciphertext is carried under body, never value: on every other event
+            // value means field ciphertext, which a message body is not. It is encrypted for
+            // the SERVICE key, so the ordinary decrypt opens it.
+            Object cipher = obj.get("body");
+            if (cipher != null) {
+                messageBody = deps.decryptValue().apply(cipher);
+            }
+        }
+
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), Parse.str(obj.get("customer_type")), slug, value, live,
             documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate, requestId,
-            publicKeySha256, Value.verifiedFrom(obj, value), Parse.isoDateTime(obj.get("at")), obj);
+            publicKeySha256, connectionId, messageId, personPublicKey, messageBody,
+            Value.verifiedFrom(obj, value), Parse.isoDateTime(obj.get("at")), obj);
     }
 
     /** Parse the {@code /changes} response → a list of typed Change events. */

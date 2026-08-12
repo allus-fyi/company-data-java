@@ -505,9 +505,10 @@ A change-feed / webhook event.
 | Accessor | Meaning |
 |----------|---------|
 | `id()` | **The stable server change-row id — your dedup key** (captured before the server delete). |
-| `event()` | `connection_created`, `connection_deleted`, `field_updated`, `field_deleted`, `consent_accepted`, `consent_declined`. |
+| `event()` | `connection_created`, `connection_deleted`, `field_updated`, `field_deleted`, `consent_accepted`, `consent_declined`, `document_status_changed`, `message_received`. |
 | `personId()` | The person the change is about (may be `null`). |
 | `slug()`, `value()`, `live()` | Present only on `field_updated`; `value()` is typed exactly like `Value.value()` (incl. a lazy `BinaryHandle` for binaries). Connection/consent events carry no slot/value. `live()` is `null` when absent. |
+| `connectionId()`, `messageId()`, `personPublicKey()`, `messageBody()` | Present only on `message_received` — a person messaged your service. `messageBody()` is the **decrypted** text. See [Messaging](#messaging). |
 | `at()` | `OffsetDateTime` of the change. (There is no separate `updatedAt` on a change.) |
 
 ### `.raw()`
@@ -677,6 +678,69 @@ client.processChanges(change -> {
 ```
 
 `documentId()` / `status()` are non-null only on `document_status_changed`.
+
+---
+
+## Messaging
+
+Your service can hold a **conversation** with a connected person — the same
+messaging surface the person already uses, with your service as the counterpart.
+Two shapes:
+
+* **1-on-1** — `sendMessage(connectionId, text)`. **End-to-end encrypted**: the SDK
+  encrypts one copy to the person's public key and one to your service key before
+  anything leaves the process, so the person reads it in their app and you can
+  re-read your own outbound text. The platform stores ciphertext only.
+* **Broadcast** — `broadcastMessage(text)`. One **plaintext** message to every person
+  connected to the service (one body cannot be single-key-encrypted to all of them,
+  exactly as for a broadcast document). It seeds each person's ordinary 1-on-1
+  thread; their reply comes back end-to-end encrypted.
+
+`sendMessage` answers **201** with the created message carrying `message_id`, and returns
+that id — the value you hand back as the acknowledgement boundary.
+
+Inbound messages arrive on the **changes pump / webhook** as a `message_received`
+event — a person→company message only. A broadcast raises no event of its own.
+
+```java
+client.processChanges(change -> {
+    if (!"message_received".equals(change.event())) return;
+    log(change.personId(), change.messageBody());   // already decrypted for you
+
+    // Reply on the same connection. personPublicKey() rides the event, so no second
+    // key lookup is needed.
+    client.sendMessage(change.connectionId(), "Thanks — we're on it.",
+                       change.personPublicKey(), null);
+
+    // Acknowledge what you handled. REQUIRED: without it the message stays unread
+    // forever, your unread count grows, and the person never sees a read receipt.
+    // Sending a reply does NOT acknowledge anything.
+    client.markMessagesRead(change.connectionId(), change.messageId());
+});
+```
+
+`markMessagesRead` is bounded by the boundary message: a message that arrived while
+you were working is **not** swept, and a repeat is a no-op. The boundary must be a
+message the person sent on that connection — anything else is refused with an
+`ApiException` carrying `company_data.ack_boundary_invalid` (400).
+
+```java
+// One plaintext announcement to everyone connected to the service.
+client.broadcastMessage("We're closed on Friday.");
+```
+
+Refusals surface as `ApiException` carrying the platform `error_key`:
+
+| `error_key` | Status | Meaning |
+|-------------|--------|---------|
+| `messages.messaging_not_entitled` | 403 | The company's plan does not include messaging. |
+| `messages.not_connected` | 403 | The person is not connected to this service. |
+| `messages.messaging_suspended` | 403 | Messaging is suspended for this service (or the whole company). |
+| `messages.broadcast_suspended` | 403 | Broadcast alone is suspended for this service. |
+| `messages.encryption_required` | 400 | A 1-on-1 body was not a valid encrypted wrapper. |
+| `messages.broadcast_audience_too_large` | 422 | The service has more connections than a broadcast allows. |
+| `messages.rate_limited` | 429 | Too many 1-on-1 messages to the same person. |
+| `company_data.ack_boundary_invalid` | 400 | The ack boundary is not a message the person sent on that connection. |
 
 ---
 
