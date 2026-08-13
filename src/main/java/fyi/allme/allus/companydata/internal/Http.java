@@ -5,6 +5,8 @@ import fyi.allme.allus.companydata.AuthException;
 import fyi.allme.allus.companydata.Config;
 import fyi.allme.allus.companydata.RateLimitException;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.DoubleConsumer;
@@ -20,15 +22,17 @@ import java.util.function.LongSupplier;
  *       {@code {api_url}/oauth2/token} and caches the bearer token + expiry.
  *       Refresh is automatic; a 401 mid-flight triggers exactly one
  *       refresh-and-retry, then {@link AuthException}.</li>
- *   <li><b>Region</b> — the configured {@code api_url} is the global front door and
- *       the token is minted at the client's home region, whose base the token
- *       response returns as {@code api_url}. Every call other than the token request
- *       and the region list is sent to that home base. See {@link #rebaseTo}.</li>
+ *   <li><b>Region</b> — the configured {@code api_url} is the starting point AND the
+ *       fallback: every response that can name a home base (the token response, a 421
+ *       refusal) rebases it, and the token request itself follows the rebase like every
+ *       other call — pinning it to the configured value would keep minting at a region a
+ *       client's company has left. See {@link #rebaseTo}.</li>
  *   <li><b>Format</b> — sets {@code Accept} per {@code config.format()}
  *       (json/xml) and parses the body accordingly (XML is XXE-safe via {@link Xml}).</li>
  *   <li><b>Errors</b> — maps non-2xx to the error taxonomy: 401 → refresh+retry then
- *       {@link AuthException}; 429 → Retry-After-driven bounded backoff then
- *       {@link RateLimitException}; other non-2xx → {@link ApiException}.</li>
+ *       {@link AuthException}; 421 → rebase+retry once then {@link ApiException}; 429 →
+ *       Retry-After-driven bounded backoff then {@link RateLimitException}; other non-2xx →
+ *       {@link ApiException}.</li>
  * </ul>
  *
  * <p>Config-only key handling: the client id/secret come from
@@ -159,8 +163,7 @@ public final class Http {
      * <p>Returns {@code true} only when the base actually MOVED. A candidate that is absent,
      * not a string, empty, or equal to the current base is not stored and returns
      * {@code false}. Nothing here validates the candidate against a fetched region list: the
-     * SDK stores the base the server names and uses it, exactly as every first-party client
-     * does.
+     * SDK stores the base the server names and uses it.
      */
     private boolean rebaseTo(Object candidate) {
         if (!(candidate instanceof String s)) {
@@ -244,9 +247,9 @@ public final class Http {
      * or raw-bytes body, parses JSON or XML (unless {@code raw} is set, in which case the
      * 2xx body BYTES are returned untouched — no charset decode, or {@code wantResponse}, in which
      * case the whole 2xx {@link Transport.Response} is), and maps non-2xx responses to the SDK
-     * errors: 401 → one refresh-and-retry then {@link AuthException}; 429 → bounded
-     * Retry-After backoff then {@link RateLimitException}; other non-2xx →
-     * {@link ApiException}.
+     * errors: 401 → one refresh-and-retry then {@link AuthException}; 421 → one rebase-and-retry
+     * then {@link ApiException}; 429 → bounded Retry-After backoff then
+     * {@link RateLimitException}; other non-2xx → {@link ApiException}.
      */
     private Object request(String method, String path, Map<String, String> params,
                            Object jsonBody, byte[] rawBody, String contentType,
@@ -266,9 +269,11 @@ public final class Http {
         boolean refreshed401 = false;
         boolean rebased421 = false;
         while (true) {
-            // Resolved per attempt: a 421 rebase moves the base under the next one.
-            String url = url(path);
+            // Resolved per attempt, AFTER the bearer call: the first bearer() of a process
+            // mints the token and rebases from its response, so the base a fresh token was
+            // just fetched under is the base this request must go to as well.
             String tok = bearer(false);
+            String reqUrl = url(path);
             Map<String, String> headers = new LinkedHashMap<>();
             headers.put("Authorization", "Bearer " + tok);
             headers.put("Accept", accept);
@@ -278,9 +283,9 @@ public final class Http {
 
             Transport.Response resp;
             if ("GET".equals(method) && body == null) {
-                resp = transport.get(url, params, headers);
+                resp = transport.get(reqUrl, params, headers);
             } else {
-                resp = transport.send(method, url, body, headers);
+                resp = transport.send(method, reqUrl, body, headers);
             }
             int status = resp.status();
 
@@ -307,8 +312,7 @@ public final class Http {
                 // The front door serves no data route: it names the caller's home base and
                 // expects the call there. Rebase once and replay; a second 421 surfaces.
                 ErrorBody err = extractError(resp);
-                if (!rebased421
-                    && REBASE_ERROR_KEY.equals(err.errorKey())
+                if (!rebased421 && REBASE_ERROR_KEY.equals(err.errorKey())
                     && rebaseTo(err.details().get(REGION_BASE_MEMBER))) {
                     rebased421 = true;
                     continue;
@@ -338,11 +342,36 @@ public final class Http {
         }
     }
 
+    /**
+     * Resolve {@code path} against the CURRENT base. An already-absolute {@code path} (the
+     * lazy binary handle's server-supplied {@code value_url}) is reduced to its path+query and
+     * rebuilt against the current base too — so a value_url minted before a rebase, or replayed
+     * on a 421 retry after one, still lands at the base every other request now uses.
+     */
     private String url(String path) {
         if (path.startsWith("http://") || path.startsWith("https://")) {
-            return path;
+            path = pathAndQuery(path);
         }
         return apiUrl + (path.startsWith("/") ? "" : "/") + path;
+    }
+
+    /**
+     * The path + query + fragment portion of an absolute URL, dropping its scheme and host.
+     */
+    private static String pathAndQuery(String absoluteUrl) {
+        try {
+            URI uri = new URI(absoluteUrl);
+            StringBuilder result = new StringBuilder(uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath());
+            if (uri.getRawQuery() != null) {
+                result.append('?').append(uri.getRawQuery());
+            }
+            if (uri.getRawFragment() != null) {
+                result.append('#').append(uri.getRawFragment());
+            }
+            return result.toString();
+        } catch (URISyntaxException exc) {
+            return absoluteUrl;
+        }
     }
 
     /**
