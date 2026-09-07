@@ -32,6 +32,17 @@ public record Value(
      * it does not lapse. Past → {@link #verified()} reads false.
      */
     OffsetDateTime verifiedExpiresAt,
+    /**
+     * HOW allme bound this value: {@code email_code} | {@code sms_code} | {@code sumsub_id} |
+     * {@code sumsub_address}. Null when the value was bound before the proof log existed — the
+     * three proof members arrive together or not at all. Readable whatever {@link #verified()}
+     * says; that boolean stays the only trust decision.
+     */
+    String verifiedMethod,
+    /** WHO established the proof: {@code allme} | {@code sumsub}. Same all-or-none set. */
+    String verifiedProvider,
+    /** The id to quote back to allme in a dispute. Same all-or-none set. */
+    String verificationId,
     Map<String, Object> raw
 ) {
     static Value fromApi(Map<String, Object> entry, String fieldType, ModelDeps deps) {
@@ -46,6 +57,9 @@ public record Value(
             verifiedFrom(entry, typed),
             Parse.isoDateTime(entry.get("verified_at")),
             Parse.isoDateTime(entry.get("verified_expires_at")),
+            Parse.str(entry.get("verified_method")),
+            Parse.str(entry.get("verified_provider")),
+            Parse.str(entry.get("verification_id")),
             entry);
     }
 

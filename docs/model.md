@@ -56,6 +56,9 @@ record Value(
     boolean verified,              // the hash recomputes over the plaintext AND the verification has not lapsed
     OffsetDateTime verifiedAt,        // when the answering field was verified
     OffsetDateTime verifiedExpiresAt, // when that verification lapses; null = it does not
+    String verifiedMethod,   // HOW allme bound it: email_code|sms_code|sumsub_id|sumsub_address
+    String verifiedProvider, // WHO established the proof: allme|sumsub
+    String verificationId,   // the proof id to quote back to allme in a dispute
     Map<String, Object> raw
 ) {}
 ```
@@ -140,6 +143,9 @@ record Change(
     boolean verified,      // field_updated only; hash recomputes AND the verification has not lapsed
     OffsetDateTime verifiedAt,        // when the answering field was verified
     OffsetDateTime verifiedExpiresAt, // when that verification lapses; null = it does not
+    String verifiedMethod,   // HOW allme bound it: email_code|sms_code|sumsub_id|sumsub_address
+    String verifiedProvider, // WHO established the proof: allme|sumsub
+    String verificationId,   // the proof id to quote back to allme in a dispute
     OffsetDateTime at,     // the change time (no separate updatedAt on a change)
     Map<String, Object> raw
 ) {}

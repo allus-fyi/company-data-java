@@ -48,6 +48,11 @@ public record Change(
     boolean verified, // true iff a field_updated value's hash matches AND the verification has not lapsed
     OffsetDateTime verifiedAt,        // when the answering field was verified; null when unverified
     OffsetDateTime verifiedExpiresAt, // when that verification lapses; null = it does not
+    // The proof metadata beside the binding — HOW it was bound, by WHOM, and the id to quote back
+    // to allme in a dispute. All three or none; readable whatever `verified` says.
+    String verifiedMethod,
+    String verifiedProvider,
+    String verificationId,
     OffsetDateTime at,
     Map<String, Object> raw
 ) {
@@ -113,6 +118,9 @@ public record Change(
             Value.verifiedFrom(obj, value),
             Parse.isoDateTime(obj.get("verified_at")),
             Parse.isoDateTime(obj.get("verified_expires_at")),
+            Parse.str(obj.get("verified_method")),
+            Parse.str(obj.get("verified_provider")),
+            Parse.str(obj.get("verification_id")),
             Parse.isoDateTime(obj.get("at")), obj);
     }
 

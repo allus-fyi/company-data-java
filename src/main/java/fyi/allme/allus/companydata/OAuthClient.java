@@ -135,12 +135,21 @@ public final class OAuthClient {
      * verification dies with the document); an EXPIRED attestation is unverified, so
      * {@code verified} already reads false once it has passed.
      *
+     * <p>{@code verifiedMethod} / {@code verifiedProvider} / {@code verificationId} are the PROOF
+     * metadata read from the OPENED seal — HOW the value was bound, by WHOM, and the id to quote
+     * back to allme in a dispute. All three arrive together or not at all; a seal built before the
+     * proof log existed carries none of them and every one reads null.
+     *
      * @param hash lowercase hex
      * @param salt lowercase hex
      * @param verifiedExpiresAt when the verification lapses; null when it does not
+     * @param verifiedMethod how allme bound the value; null when not carried
+     * @param verifiedProvider who established the proof; null when not carried
+     * @param verificationId the proof id to quote back; null when not carried
      */
     public record Attestation(boolean verified, String hash, String salt, String verifiedAt,
-                              String verifiedExpiresAt) {
+                              String verifiedExpiresAt, String verifiedMethod,
+                              String verifiedProvider, String verificationId) {
     }
 
     /**
@@ -387,7 +396,12 @@ public final class OAuthClient {
                 hash,
                 salt,
                 verifiedAt == null ? "" : verifiedAt,
-                verifiedExpiresAt));
+                verifiedExpiresAt,
+                // Additive INSIDE the seal, and parse-permissive: a seal built before the proof
+                // log existed carries none of the three and every one reads null.
+                emptyToNull(str(obj.get("verified_method"))),
+                emptyToNull(str(obj.get("verified_provider"))),
+                emptyToNull(str(obj.get("verification_id")))));
         }
         return out;
     }
@@ -496,6 +510,14 @@ public final class OAuthClient {
 
     private static String str(Object v) {
         return v instanceof String s ? s : null;
+    }
+
+    /**
+     * An empty string is not an answer — an absent seal member and one carrying {@code ""} say the
+     * same thing, and both must read null so a caller's null check is the whole test.
+     */
+    private static String emptyToNull(String v) {
+        return v == null || v.isEmpty() ? null : v;
     }
 
     private static String enc(String v) {
