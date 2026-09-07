@@ -646,6 +646,15 @@ client.deleteDocument(doc.id());
 `payloadKind()`, `isPrivate()`, `value()`, `metadata()`, `createdAt()`,
 `updatedAt()`, plus `.json()` (json docs) and `.raw()`.
 
+A contract-flow-generated document can also read `status() == "waiting"` — a
+run-participant copy whose signer has not been reached yet in the run's ordered
+signing plan. It is read-only: `updateDocumentStatus` throws an `ApiException` with
+`errorKey() equal to "documents.run_managed"` (409) if you try to write `status` on a
+run-participant document while it is `waiting`, `ready_to_sign` or `offering` — that
+status moves only through flow generation, the run's own advance, sign/accept, or a
+run cancel/decline. Such a document's `runSignatures()` carries the run's ordered
+signature summary.
+
 ### `flowRunDocument(runId)`
 
 ```java

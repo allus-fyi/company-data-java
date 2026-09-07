@@ -763,7 +763,14 @@ public final class Client {
 
     /**
      * Set a document's lifecycle status
-     * ({@code offering|ready_to_sign|active|active_but_ending|ended}).
+     * ({@code offering|ready_to_sign|active|active_but_ending|ended}). {@code waiting} is
+     * read-only — stamped by a contract-flow run on an unsigned run-participant copy, never a
+     * value to write.
+     *
+     * @throws ApiException with {@code error_key: "documents.run_managed"} (409) when the
+     *     document is a contract-flow run-participant document and its current status is
+     *     {@code waiting}, {@code ready_to_sign} or {@code offering} — that status moves only
+     *     through flow generation, the run's own advance, sign/accept, or a run cancel/decline.
      */
     public Document updateDocumentStatus(String documentId, String status) {
         Object body = http.put(DOCUMENTS + "/" + documentId, Map.of("status", status));

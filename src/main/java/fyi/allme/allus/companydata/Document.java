@@ -40,6 +40,10 @@ public record Document(
     boolean requiresSignature,   // contract: the person must sign
     boolean requiresAcceptance,  // contract: the person must accept
     List<Map<String, Object>> signatures,  // contract sign/accept audit trail (company-side reads only)
+    // Present only on a contract-flow run-participant document: the run's ordered signature
+    // summary, one entry per participant owing an act — each
+    // {party_key, document_id, position, status, action, acted_at}. Null on any other document.
+    List<Map<String, Object>> runSignatures,
     Function<Object, String> decryptValue,  // closure over the service key; never a key arg
     Map<String, Object> raw
 ) {
@@ -93,6 +97,15 @@ public record Document(
                 }
             }
         }
+        List<Map<String, Object>> runSignatures = null;
+        if (obj.get("run_signatures") instanceof List<?> runSigs) {
+            runSignatures = new java.util.ArrayList<>();
+            for (Object s : runSigs) {
+                if (s instanceof Map<?, ?> sm) {
+                    runSignatures.add((Map<String, Object>) sm);
+                }
+            }
+        }
         return new Document(
             Parse.str(obj.get("id")),
             Parse.str(obj.get("kind")),
@@ -108,6 +121,7 @@ public record Document(
             Parse.bool(obj.get("requires_signature")),
             Parse.bool(obj.get("requires_acceptance")),
             signatures,
+            runSignatures,
             decryptValue,
             obj);
     }

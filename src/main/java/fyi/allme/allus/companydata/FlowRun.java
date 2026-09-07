@@ -40,6 +40,12 @@ public record FlowRun(
     List<Map<String, Object>> answers,
     OffsetDateTime createdAt,
     OffsetDateTime updatedAt,
+    /**
+     * Every party the run binds, the owning company included (flows.html §5a/§9 item 12).
+     * {@code connectionId} above names only the PRIMARY counterparty, so a multi-actor run's
+     * other counterparties are reachable only here.
+     */
+    List<FlowRunParticipant> participants,
     Map<String, Object> raw
 ) {
 
@@ -97,6 +103,15 @@ public record FlowRun(
             outputMode = Parse.str(definition.get("output_mode"));
         }
 
+        List<FlowRunParticipant> participants = new ArrayList<>();
+        if (obj.get("participants") instanceof List<?> pl) {
+            for (Object p : pl) {
+                if (p instanceof Map<?, ?> pm) {
+                    participants.add(FlowRunParticipant.fromApi((Map<String, Object>) pm));
+                }
+            }
+        }
+
         return new FlowRun(
             Parse.str(obj.get("id")),
             Parse.str(obj.get("flow_id")),
@@ -114,6 +129,7 @@ public record FlowRun(
             answers,
             Parse.isoDateTime(obj.get("created_at")),
             Parse.isoDateTime(obj.get("updated_at")),
+            participants,
             obj);
     }
 }
