@@ -29,6 +29,13 @@ public final class FieldValidation {
     private static final Pattern PHONE_RE = Pattern.compile("^\\+?\\d{4,15}$");
     private static final Pattern CARD_RE = Pattern.compile("^\\d{12,19}$");
     private static final Pattern DATE_RE = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    // Numeric grammars accept ASCII digits only.
+    private static final Pattern INTEGER_RE = Pattern.compile("^-?[0-9]+$");
+    // decimal(10,2) is a FIXED shape: up to 8 integer digits + up to 2 decimal digits (10
+    // significant digits total), never a per-field configurable precision.
+    private static final Pattern DECIMAL_RE = Pattern.compile("^-?[0-9]{1,8}(\\.[0-9]{1,2})?$");
+    // Float accepts decimal or scientific notation.
+    private static final Pattern FLOAT_RE = Pattern.compile("^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$");
 
     private static final Pattern POSTAL_RE = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9 -]{1,9}$");
     private static final Pattern EXPIRY_RE = Pattern.compile("^(0[1-9]|1[0-2])/\\d{2}(\\d{2})?$");
@@ -108,6 +115,9 @@ public final class FieldValidation {
         Map.entry("legal_document", new Rule("object", null, null)),
         Map.entry("number", new Rule("number", null, null)),
         Map.entry("boolean", new Rule("boolean", null, null)),
+        Map.entry("integer", new Rule("integer", null, null)),
+        Map.entry("decimal", new Rule("decimal", null, null)),
+        Map.entry("float", new Rule("float", null, null)),
         Map.entry("country", new Rule("countryCode", null, null)),
         Map.entry("nationality", new Rule("countryCode", null, null)));
     // text + unknown => no rule => accept anything
@@ -186,6 +196,12 @@ public final class FieldValidation {
                     return false;
                 }
             }
+            case "integer":
+                return INTEGER_RE.matcher(value.strip()).matches();
+            case "decimal":
+                return DECIMAL_RE.matcher(value.strip()).matches();
+            case "float":
+                return FLOAT_RE.matcher(value.strip()).matches();
             case "boolean":
                 return "true".equals(value) || "false".equals(value);
             case "countryCode":
