@@ -47,6 +47,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -667,19 +668,32 @@ public final class IdentityHandlers {
     }
 
     /**
-     * The registered redirect URI: http://{host}/callback, host = the origin the browser actually used.
-     * The server binds all interfaces, so a phone on the LAN saves ITS origin into the config file
-     * and the OAuth round-trip returns to the phone rather than to the phone's own localhost. Never falls
-     * back to a hardcoded host — `127.0.0.1` and `localhost` are DIFFERENT origins for redirect
-     * matching and for browser storage alike, so a substituted default drops the developer on an origin
-     * whose localStorage never held the setup and whose URI the OAuth app never registered.
+     * The scheme THIS request reached us on. There is no TLS termination in-process, so a TLS proxy in
+     * front of the example is the only source: the first comma-separated value of
+     * {@code X-Forwarded-Proto}, lowercased. Anything but {@code https} there — including an absent
+     * header — means {@code http}.
+     */
+    private static String requestScheme(HttpExchange ex) {
+        String raw = ex.getRequestHeaders().getFirst("X-Forwarded-Proto");
+        String first = raw == null ? "" : raw.split(",", 2)[0].trim().toLowerCase(Locale.ROOT);
+        return "https".equals(first) ? "https" : "http";
+    }
+
+    /**
+     * The registered redirect URI: {scheme}://{host}/callback, host = the origin the browser actually
+     * used and scheme = what it reached us on. The server binds all interfaces, so a phone on the LAN
+     * saves ITS origin into the config file and the OAuth round-trip returns to the phone rather than to
+     * the phone's own localhost. Never falls back to a hardcoded host — `127.0.0.1` and `localhost` are
+     * DIFFERENT origins for redirect matching and for browser storage alike, so a substituted default
+     * drops the developer on an origin whose localStorage never held the setup and whose URI the OAuth
+     * app never registered.
      */
     private String redirectUri(HttpExchange ex) {
         String host = requestHost(ex);
         if (host.isEmpty()) {
             throw new IllegalStateException(NO_ORIGIN);
         }
-        return "http://" + host + "/callback";
+        return requestScheme(ex) + "://" + host + "/callback";
     }
 
     // ── value / claim shaping ────────────────────────────────────────────────────
