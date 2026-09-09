@@ -54,7 +54,7 @@ class PumpTest {
 
     private static Pump.DecryptChange decryptChange() {
         ModelDeps deps = new ModelDeps(
-            w -> Crypto.decrypt(Wrapper.of(w), privateKey), slug -> "text", null);
+            w -> Crypto.decrypt(Wrapper.of(w), privateKey), slug -> "text", TestFieldTypes::registry, null);
         return event -> Change.fromApi(event, deps);
     }
 
@@ -459,7 +459,7 @@ class PumpTest {
                 decryptCalls.merge("chg-0002", 1, Integer::sum);
                 throw new DecryptException("corrupt ciphertext for chg-0002");
             }
-            ModelDeps deps = new ModelDeps(w -> Crypto.decrypt(Wrapper.of(w), privateKey), s -> "text", null);
+            ModelDeps deps = new ModelDeps(w -> Crypto.decrypt(Wrapper.of(w), privateKey), s -> "text", TestFieldTypes::registry, null);
             return Change.fromApi(event, deps);
         };
 
@@ -504,7 +504,7 @@ class PumpTest {
             if ("chg-0001".equals(event.get("id"))) {
                 throw new DecryptException("undecryptable");
             }
-            ModelDeps deps = new ModelDeps(w -> Crypto.decrypt(Wrapper.of(w), privateKey), s -> "text", null);
+            ModelDeps deps = new ModelDeps(w -> Crypto.decrypt(Wrapper.of(w), privateKey), s -> "text", TestFieldTypes::registry, null);
             return Change.fromApi(event, deps);
         };
         FakeSource source = new FakeSource(List.of(makePoisonEvent("chg-0001")));

@@ -94,11 +94,11 @@ class OAuthClientTest {
     void authorizeUrlClaimValidation() throws Exception {
         OAuthClient c = new OAuthClient(idwCfg(), new FakeTransport());
         // Every claim carries a mandatory `name` — the identity everything downstream is keyed by.
+        // The TYPE is passed through as written: which types are claimable is registry data the
+        // server owns, and a type it does not accept comes back as invalid_request.
         List<OAuthClient.Claim> claims = List.of(
             new OAuthClient.Claim("email", "email", "email_personal", false, false, null),
-            new OAuthClient.Claim("avatar", "photo"),
-            new OAuthClient.Claim("phone", "phone", null, true, false, null),
-            new OAuthClient.Claim("nothing", ""));
+            new OAuthClient.Claim("phone", "phone", null, true, false, null));
         Map<String, String> q = parseQuery(c.authorizeUrl("one_time",
             new OAuthClient.AuthorizeOptions().claims(claims)));
         List<Object> parsed = Json.parseArray(q.get("claims"));

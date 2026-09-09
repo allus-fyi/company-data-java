@@ -52,7 +52,7 @@ class ModelsTest {
     }
 
     private static ModelDeps deps(Function<String, String> typeForSlug) {
-        return new ModelDeps(decryptValue, typeForSlug,
+        return new ModelDeps(decryptValue, typeForSlug, TestFieldTypes::registry,
             vu -> BinaryFetchResult.encrypted(Wrapper.of(vector("binary"))));
     }
 
@@ -171,7 +171,7 @@ class ModelsTest {
             captured.put(url, true);
             return BinaryFetchResult.encrypted(Wrapper.of(((Map<String, Object>) binary).get("wrapper")));
         };
-        ModelDeps deps = new ModelDeps(decryptValue, s -> "photo", fetch);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> "photo", TestFieldTypes::registry, fetch);
 
         Map<String, Object> logo = new LinkedHashMap<>();
         logo.put("value_url", "https://api.allme.fyi/api/company-data/connections/csc-1/slots/sf-9/file");
@@ -260,7 +260,7 @@ class ModelsTest {
         Map<String, Object> binary = (Map<String, Object>) vector.get("binary");
         Function<String, BinaryFetchResult> fetch =
             url -> BinaryFetchResult.encrypted(Wrapper.of(binary.get("wrapper")));
-        ModelDeps deps = new ModelDeps(decryptValue, s -> "photo", fetch);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> "photo", TestFieldTypes::registry, fetch);
 
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("id", "chg-50");
@@ -279,7 +279,7 @@ class ModelsTest {
 
     @Test
     void changeConsentEventHasSlugNoValue() {
-        ModelDeps deps = new ModelDeps(w -> "", s -> "email", null);
+        ModelDeps deps = new ModelDeps(w -> "", s -> "email", TestFieldTypes::registry, null);
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("id", "chg-9");
         ev.put("event", "consent_accepted");
@@ -295,7 +295,7 @@ class ModelsTest {
     /** connection_request_accepted/_rejected (idea 2) surface request_id; no slot/value. */
     @Test
     void changeConnectRequestOutcomeEventsCarryRequestId() {
-        ModelDeps deps = new ModelDeps(w -> "", s -> null, null);
+        ModelDeps deps = new ModelDeps(w -> "", s -> null, TestFieldTypes::registry, null);
 
         Map<String, Object> accepted = new LinkedHashMap<>();
         accepted.put("id", "c1");
@@ -356,7 +356,7 @@ class ModelsTest {
     /** Every change event carries the person's profile share_code (nullable). */
     @Test
     void changeIncludesShareCode() {
-        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, TestFieldTypes::registry, null);
         Map<String, Object> withCode = new LinkedHashMap<>();
         withCode.put("id", "chg-1");
         withCode.put("event", "connection_created");
@@ -396,7 +396,7 @@ class ModelsTest {
     /** B2B: a change event carries customer_type; absent -> null. */
     @Test
     void changeIncludesCustomerType() {
-        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, TestFieldTypes::registry, null);
         Map<String, Object> co = new LinkedHashMap<>();
         co.put("id", "chg-1");
         co.put("event", "connection_created");
@@ -416,7 +416,7 @@ class ModelsTest {
     /** B2B: a connection carries customer_type + share_code (both nullable). */
     @Test
     void connectionIncludesCustomerTypeAndShareCode() {
-        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, TestFieldTypes::registry, null);
         Map<String, Object> obj = new LinkedHashMap<>();
         obj.put("connection_id", "c-1");
         obj.put("user_id", "co-9");
@@ -440,7 +440,7 @@ class ModelsTest {
 
     @Test
     void changeDocumentStatusChangedParses() {
-        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, TestFieldTypes::registry, null);
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("id", "chg-doc");
         ev.put("event", "document_status_changed");
@@ -464,7 +464,7 @@ class ModelsTest {
 
     @Test
     void changeDocumentStatusChangedCarriesAction() {
-        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, TestFieldTypes::registry, null);
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("id", "chg-sign");
         ev.put("event", "document_status_changed");
@@ -485,7 +485,7 @@ class ModelsTest {
 
     @Test
     void changeDocumentStatusChangedCarriesCancellationNote() {
-        ModelDeps deps = new ModelDeps(decryptValue, s -> null, null);
+        ModelDeps deps = new ModelDeps(decryptValue, s -> null, TestFieldTypes::registry, null);
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("id", "chg-cancel");
         ev.put("event", "document_status_changed");

@@ -3,12 +3,13 @@ package fyi.allme.allus.companydata.internal;
 import fyi.allme.allus.companydata.BinaryFetchResult;
 import fyi.allme.allus.companydata.BinaryHandle;
 import fyi.allme.allus.companydata.DecryptException;
+import fyi.allme.allus.companydata.FieldTypeRegistry;
 import fyi.allme.allus.companydata.Wrapper;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * The decrypt/type/binary-fetch closures the model factories need,
@@ -18,38 +19,34 @@ import java.util.function.Function;
  *
  * @param decryptValue raw ciphertext wrapper (Map or JSON string or {@link Wrapper}) → plaintext string
  * @param typeForSlug  slug → the request field's type (e.g. "email", "photo"), or null
+ * @param fieldTypes   the served field-type registry, which says what that type MEANS; supplied as
+ *                     a {@link Supplier} because the client fetches it lazily, beside the catalog
  * @param binaryFetch  value_url → a {@link BinaryFetchResult} saying which of the route's two 200
  *                     shapes arrived (the client does the GET and classifies it); may be null
  */
 public record ModelDeps(
     Function<Object, String> decryptValue,
     Function<String, String> typeForSlug,
+    Supplier<FieldTypeRegistry> fieldTypes,
     Function<String, BinaryFetchResult> binaryFetch
 ) {
-    /** Field types whose decrypted plaintext is a JSON object → a parsed Map. */
-    public static final List<String> STRUCTURED_TYPES = List.of("address", "bank", "creditcard");
-    /**
-     * Field types whose value is a lazy binary handle (served as a value_url). The ID-document
-     * subtypes are children of {@code legal_document} and share its envelope.
-     */
-    public static final List<String> BINARY_TYPES = List.of(
-        "photo", "document", "legal_document", "passport", "photo_id", "drivers_license");
-    /** Field types whose decrypted plaintext is an ISO date. */
-    public static final List<String> DATE_TYPES = List.of("date", "date_of_birth");
-
     /**
      * Decrypt + coerce one value entry to its typed Java form.
      *
-     * <p>Binary → a lazy {@link BinaryHandle} over the slot value_url (no eager
-     * fetch/decrypt). Structured → a parsed Map. Date → a {@link LocalDate}
-     * (falling back to the raw string if unparseable). Everything else → the
-     * decrypted plaintext String.
+     * <p>The shape comes from the type's RESOLVED definition in the served registry — its storage
+     * lane and its primitive — so a type added to the registry types itself from the day it is a
+     * row: a photo/document lane → a lazy {@link BinaryHandle} over the slot value_url (no eager
+     * fetch/decrypt); a {@code composite} → a parsed Map; a {@code multilist} → a parsed List; a
+     * {@code date} → a {@link LocalDate} (falling back to the raw string if unparseable);
+     * everything else → the decrypted plaintext String.
      */
     public Object typedValue(Map<String, Object> entry, String fieldType) {
         String ftype = fieldType == null ? "" : fieldType.toLowerCase();
+        FieldTypeRegistry registry = fieldTypes.get();
+        FieldTypeRegistry.Resolved definition = registry.resolve(ftype);
 
         // Binary → a lazy handle over the slot value_url.
-        if (BINARY_TYPES.contains(ftype) || entry.containsKey("value_url")) {
+        if (registry.isBinary(ftype) || entry.containsKey("value_url")) {
             Object valueUrl = entry.get("value_url");
             if (valueUrl == null) {
                 return BinaryHandle.empty();
@@ -66,7 +63,7 @@ public record ModelDeps(
         }
         String plaintext = decryptValue.apply(ciphertext);
 
-        if (STRUCTURED_TYPES.contains(ftype)) {
+        if ("composite".equals(definition.input())) {
             try {
                 return Json.parseObject(plaintext);
             } catch (com.fasterxml.jackson.core.JsonProcessingException exc) {
@@ -74,11 +71,19 @@ public record ModelDeps(
                     "structured value for type '" + ftype + "' is not valid JSON", exc);
             }
         }
-        if (DATE_TYPES.contains(ftype)) {
+        if ("multilist".equals(definition.input())) {
+            try {
+                return Json.parseArray(plaintext);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException exc) {
+                throw new DecryptException(
+                    "structured value for type '" + ftype + "' is not valid JSON", exc);
+            }
+        }
+        if ("date".equals(definition.input())) {
             LocalDate d = Parse.isoDate(plaintext);
             return d != null ? d : plaintext;
         }
-        // text/email/phone/url and anything unknown → the plaintext string.
+        // Every other primitive, and a type the registry does not carry, is the plaintext string.
         return plaintext;
     }
 }

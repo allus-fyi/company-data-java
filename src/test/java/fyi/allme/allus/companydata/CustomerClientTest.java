@@ -52,6 +52,10 @@ final class CustomerClientTest {
         }
 
         public Response get(String url, Map<String, String> params, Map<String, String> headers) {
+            // The registry route is served the way a deployment serves it.
+            if (url.endsWith("/api/contact-field-types")) {
+                return FakeTransport.json(200, TestFieldTypes.body());
+            }
             return router.apply(url, params);
         }
 

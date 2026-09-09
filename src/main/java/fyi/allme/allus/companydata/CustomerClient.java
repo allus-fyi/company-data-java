@@ -32,6 +32,7 @@ public final class CustomerClient {
     private static final String CONSENTS = "/api/company-connections/consents";
     private static final String CUSTOMER_CHANGES = "/api/customer/changes";
     private static final String KEYS = "/api/keys";
+    private static final String FIELD_TYPES = "/api/contact-field-types";
 
     private final Config config;
     private final Http http;
@@ -71,6 +72,13 @@ public final class CustomerClient {
     private final Map<String, Long> serviceKeyGen = new LinkedHashMap<>();
     // "companyCode/serviceCode" → {request_field_id: field_type}, for typed-answer validation.
     private final Map<String, Map<String, String>> requestTypeCache = new LinkedHashMap<>();
+    /**
+     * The field-type registry, fetched beside the request-field lookup and held for the life of the
+     * client. A type it does not carry triggers ONE refetch; a type a refetch still does not
+     * resolve is remembered in {@code unresolvedTypes} and never asked for again.
+     */
+    private volatile FieldTypeRegistry fieldTypes;
+    private final java.util.Set<String> unresolvedTypes = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private Pump pump;
 
     public CustomerClient(Config config) {
@@ -89,7 +97,7 @@ public final class CustomerClient {
         this.http = http != null ? http : new Http(config.toCustomerHttpConfig());
         this.accountKey = Webhooks.loadAccountKey(config);
         // No slug catalog for customer events (they never carry a person's secret field).
-        this.deps = new ModelDeps(this::decryptAccount, slug -> null, this::fetchBinary);
+        this.deps = new ModelDeps(this::decryptAccount, slug -> null, this::fieldTypes, this::fetchBinary);
     }
 
     /** Build from a customer-role JSON config file. */
@@ -316,6 +324,61 @@ public final class CustomerClient {
         return pump().retryDeadLetters(handler);
     }
 
+    /**
+     * The field-type registry — what every TYPE in a request catalog means.
+     *
+     * <p>Fetched from {@code GET /api/contact-field-types} beside the connect-screen lookup this
+     * client resolves a request row's type from, and held in memory for the life of the client. It
+     * is what validates a typed answer before it is encrypted.
+     */
+    public FieldTypeRegistry fieldTypes() {
+        FieldTypeRegistry held = fieldTypes;
+        if (held == null) {
+            held = loadFieldTypes();
+            fieldTypes = held;
+        }
+        return held;
+    }
+
+    /**
+     * One fetch of the registry rows, with no caching of its own. A failure is raised, never
+     * answered with an empty registry: "unknown accepts anything" is a verdict about the deployment
+     * and must not stand in for a fetch that did not happen.
+     */
+    private FieldTypeRegistry loadFieldTypes() {
+        // The registry route answers JSON to every caller — it is not one of the customer routes
+        // that honour the configured format — so its body is parsed as JSON whatever this client
+        // speaks elsewhere.
+        Object body = http.parseBodyAsJson(http.getResponse(FIELD_TYPES));
+        return new FieldTypeRegistry(body instanceof List<?> rows ? rows : List.of());
+    }
+
+    /**
+     * One bounded refetch when the held registry does not carry a type in use.
+     *
+     * <p>The refetch replaces the held registry only once it has ARRIVED, so a refetch that fails
+     * leaves the rows already loaded standing rather than none at all.
+     */
+    private void ensureTypesKnown(java.util.Collection<String> types) {
+        FieldTypeRegistry registry = fieldTypes();
+        List<String> missing = new ArrayList<>();
+        for (String type : types) {
+            if (type != null && !type.isEmpty() && !registry.knows(type) && !unresolvedTypes.contains(type)) {
+                missing.add(type);
+            }
+        }
+        if (missing.isEmpty()) {
+            return;
+        }
+        registry = loadFieldTypes();
+        fieldTypes = registry;
+        for (String type : missing) {
+            if (!registry.knows(type)) {
+                unresolvedTypes.add(type);
+            }
+        }
+    }
+
     // ── account-level webhook receiver helpers (config-driven) ──────────────────
 
     public boolean verifyWebhook(Object rawBody, Map<String, ?> headers) {
@@ -392,7 +455,11 @@ public final class CustomerClient {
         } catch (RuntimeException exc) {
             // best-effort — skip validation when the lookup is unavailable
         }
+        // Cached only once the registry carries the types the lookup named: a cache published
+        // ahead of a failed heal is never retried, and every answer it types is then validated
+        // against a registry that does not know the type.
         synchronized (otherLock) {
+            ensureTypesKnown(map.values());
             requestTypeCache.put(key, map);
         }
         return map;
@@ -408,7 +475,7 @@ public final class CustomerClient {
         Map<String, String> types = requestFieldTypes(companyCode, serviceCode);
         for (TypedAnswer a : answers) {
             String ft = types.get(a.requestFieldId());
-            if (ft != null && !FieldValidation.isValid(ft, a.value())) {
+            if (ft != null && !fieldTypes().isFieldValueValid(ft, a.value())) {
                 throw new ValidationException(a.requestFieldId(), ft);
             }
         }

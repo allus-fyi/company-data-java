@@ -33,10 +33,6 @@ public final class OAuthClient {
     /** The hosted consent surface. Native apps claim this https link; web is the fallback. */
     public static final String DEFAULT_AUTHORIZE_URL = "https://web.allme.fyi/auth";
 
-    // Binary field types can't be requested as claims — the ID-document subtypes are binary too,
-    // so no ID document ever reaches this surface.
-    private static final Set<String> NON_CLAIMABLE = Set.of(
-        "photo", "document", "legal_document", "passport", "photo_id", "drivers_license");
     private static final int MAX_CLAIMS = 15;
     private static final Set<String> MODES = Set.of("signin", "one_time", "connect", "2fa_enroll");
     private static final Set<String> RESPONSE_MODES = Set.of("redirect", "detached");
@@ -194,6 +190,12 @@ public final class OAuthClient {
      * Build the consent-screen URL — the "Sign in with allme" button target.
      *
      * <p>{@code mode} is one of {@code signin} | {@code one_time} | {@code connect} | {@code 2fa_enroll}.
+     *
+     * <p>Claims are validated for what this client can answer for itself — a name, no duplicate
+     * name, at most 15 — and are otherwise sent as written. WHICH TYPES ARE CLAIMABLE IS THE
+     * SERVER'S ANSWER: this URL is built before any token exists and an identity app reads no
+     * registry, so a claim of a type the server does not accept comes back as
+     * {@code invalid_request} rather than being dropped here.
      */
     public String authorizeUrl(String mode, AuthorizeOptions opts) {
         if (!MODES.contains(mode)) {
@@ -231,11 +233,10 @@ public final class OAuthClient {
         }
         Set<String> seen = new LinkedHashSet<>();
         for (Claim c : claims) {
-            if (c.type() == null || c.type().isEmpty() || NON_CLAIMABLE.contains(c.type())) {
-                continue;
-            }
             // `name` is the claim's identity and it is mandatory. Refused HERE rather than
-            // left to the API, so the integration error surfaces at the call that made it.
+            // left to the API, so the integration error surfaces at the call that made it. The
+            // TYPE is not filtered: what a claim may be typed as is registry data the server owns,
+            // and this client holds none of it.
             String name = c.name() == null ? "" : c.name().trim();
             if (name.isEmpty()) {
                 throw new ConfigException("every claim must carry a `name`");
@@ -245,7 +246,7 @@ public final class OAuthClient {
             }
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("name", name);
-            entry.put("type", c.type());
+            entry.put("type", c.type() == null ? "" : c.type());
             if (c.suggest() != null && !c.suggest().isEmpty()) {
                 entry.put("suggest", c.suggest());
             }

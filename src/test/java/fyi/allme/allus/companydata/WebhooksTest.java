@@ -50,7 +50,7 @@ class WebhooksTest {
 
     private static ModelDeps deps() {
         Map<String, String> types = Map.of("work_email", "email", "logo", "photo");
-        return new ModelDeps(decryptValue, types::get, null);
+        return new ModelDeps(decryptValue, types::get, TestFieldTypes::registry, null);
     }
 
     private static Config config(Path tmp) throws Exception {
@@ -254,6 +254,9 @@ class WebhooksTest {
 
                 @Override
                 public Response get(String url, Map<String, String> params, Map<String, String> headers) {
+                    if (url.endsWith("/api/contact-field-types")) {
+                        return FakeTransport.json(200, TestFieldTypes.body());
+                    }
                     assertTrue(url.endsWith("/request-fields"), "unexpected GET " + url);
                     catalogCalls[0]++;
                     return FakeTransport.json(200, "{\"request_fields\":[{\"slug\":\"work_email\","

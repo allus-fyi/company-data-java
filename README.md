@@ -446,21 +446,48 @@ The last three are the **proof metadata** and arrive **together or not at all**:
 the proof log existed carries the four verification keys and none of these, so all three read `null`.
 They are readable whatever the verified boolean says — that boolean stays the only trust decision.
 
-### Value types (from the field's `type`)
+### Value types — from the type's RESOLVED definition
 
-| Field type | Java `value()` |
-|------------|----------------|
-| `email`, `phone`, `url`, `text` | `String` — `phone` is a single E.164-style string (`+` and digits) |
-| `country`, `nationality` | `String` — an ISO 3166-1 alpha-2 code (e.g. `"US"`, `"NL"`); not a display name |
-| `address`, `bank`, `creditcard` | `Map<String,Object>` — the decrypted plaintext is a JSON object, parsed for you |
-| `date`, `date_of_birth` | `java.time.LocalDate` (falls back to the raw `String` if it can't be parsed) |
-| `photo`, `document`, `legal_document`, `passport`, `photo_id`, `drivers_license` | a lazy `BinaryHandle` — see below. The last three are ID-document subtypes of `legal_document`. |
+A contact-field TYPE is a ROW in the served field-type registry, not a name this SDK knows by
+heart. The client fetches that registry (`GET /api/contact-field-types`) beside your request-field
+catalog and holds it for its life; a value's shape follows the type's resolved storage LANE and
+PRIMITIVE, so a type added as a row types itself with no SDK release.
 
-`country`/`nationality` values are 2-letter ISO codes, and an `address`'s
-`country`/`state` sub-fields are an ISO alpha-2 code / USPS 2-letter state code
-respectively. `FieldValidation.isValid(type, value)` validates these against the
-bundled country dataset; `FieldValidation.isValidCountryCode(code)` /
-`FieldValidation.dialCodeFor(code)` check a code or look up its E.164 dial code.
+| The type's resolved… | Java `value()` |
+|----------------------|----------------|
+| storage lane `photo` / `document` | a lazy `BinaryHandle` — see below |
+| primitive `composite` | `Map<String,Object>` — the decrypted plaintext is a JSON object, parsed for you |
+| primitive `date` | `java.time.LocalDate` (falls back to the raw `String` if it can't be parsed) |
+| primitive `multilist` | `List<Object>` of the chosen option strings |
+| anything else, and a type the registry does not carry | `String` |
+
+For the seeded types that means, unchanged: `email`/`phone`/`url`/`text` → `String` (`phone` is a
+single E.164-style string, `+` and digits); `country`/`nationality` → `String`, an ISO 3166-1
+alpha-2 code (e.g. `"US"`, `"NL"`), not a display name; `address`/`bank`/`creditcard` →
+`Map<String,Object>`; `date`/`date_of_birth` → `LocalDate`; `photo`, `document`, `legal_document`
+and the ID-document subtypes `passport`, `photo_id`, `drivers_license` → a lazy `BinaryHandle`.
+
+An `address`'s `country`/`state` sub-fields are an ISO alpha-2 code / USPS 2-letter state code
+respectively. `client.fieldTypes().isFieldValueValid(type, value)` validates a plaintext against
+its type; `FieldValidation.isValidCountryCode(code)` / `FieldValidation.dialCodeFor(code)` check a
+code or look up its E.164 dial code.
+
+Reach the registry itself as `client.fieldTypes()` for `resolve()`, `accepts(requested, actual)`,
+`descendants()`, `isBinary()`, `labelFor()`, `ordered()` and `validate(type, value)` (`null` when
+valid, else the name of the first failing rule). A request row of a PARENT type MAY be answered by a field of any DESCENDANT — a `legal_document`
+slot can be answered with a passport — but that matching is the API's and stays there. The answer
+reaches you keyed by YOUR slug and typed by the SLOT's own type: the person's source field is
+never exposed, so there is no source slug, no `field_id` and no source type to resolve, not even
+via `.raw`. For a binary slot the API resolves slot → source → file itself, so the bytes you fetch
+are the answering field's whatever type that field carries.
+
+**A CHOICE type's options.** `select` and `multiselect` carry no options of their own — a flow
+element supplies them — so `validate` / `isFieldValueValid` / `fieldValueError` each have an
+overload taking the caller's own option list. The ROW's resolved options govern whenever it has
+any, else the supplied list, and never a merge of the two; `client.fieldTypes().optionsFor(type, options)`
+answers exactly the domain the validator will enforce, or `null` when neither source has one. A
+choice with no domain at all is refused (rule name `options_unavailable`) rather than measured
+against an empty list. `submitFlowAnswers` passes the flow element's options for you.
 
 ```java
 Map<String, Object> addr = conn.values().get("home_address").asObject();
@@ -1065,9 +1092,11 @@ surfaces as the error it is.
 
 **Slug resolution.** `requestFields()` is fetched once and cached; its slug→type
 map types every value (so `address` parses to a `Map`, `photo` becomes a lazy
-binary handle, etc.). The connection/changes endpoints return values keyed by
-**your** request slug — the person's source field is dropped server-side and never
-reaches the SDK.
+binary handle, etc.). A value or a change naming a slug that map does not carry —
+a request slot configured after the client started — refetches the catalog ONCE,
+and a slug still absent afterwards is remembered and never asked for again. The
+connection/changes endpoints return values keyed by **your** request slug — the
+person's source field is dropped server-side and never reaches the SDK.
 
 **Decryption (zero-knowledge).** The service private key is loaded **once** at
 construction from the configured encrypted PEM + passphrase into an in-memory RSA

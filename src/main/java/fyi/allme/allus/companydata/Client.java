@@ -49,6 +49,7 @@ public final class Client {
     private static final String CONNECTIONS = BASE + "/connections";
     private static final String CHANGES = BASE + "/changes";
     private static final String REQUEST_FIELDS = BASE + "/request-fields";
+    private static final String FIELD_TYPES = "/api/contact-field-types";
     private static final String LOGS = BASE + "/logs";
     private static final String DOCUMENTS = BASE + "/documents";
     private static final String CONNECT_REQUESTS = BASE + "/connect-requests";
@@ -72,8 +73,26 @@ public final class Client {
     private final java.security.interfaces.RSAPrivateKey accountKey;
     private final ModelDeps deps;
 
+    /**
+     * The slug catalog, fetched once and held for the life of the client. A slug it does not
+     * carry — a request slot configured after this client started — triggers ONE refetch; a slug
+     * a refetch still does not carry is remembered in {@code unresolvedSlugs} and never asked for
+     * again, so a slot this deployment does not have cannot turn every later value into a round
+     * trip.
+     */
     private List<RequestField> requestFields;
+
     private Map<String, String> typeBySlug = new LinkedHashMap<>();
+    private final java.util.Set<String> unresolvedSlugs = new java.util.HashSet<>();
+
+    /**
+     * The field-type registry, fetched beside the catalog and held for the life of the client. A
+     * type it does not carry triggers ONE refetch; a type a refetch still does not resolve is
+     * remembered in {@code unresolvedTypes} and never asked for again, so a value of a type this
+     * deployment does not have cannot turn every later value into a round trip.
+     */
+    private FieldTypeRegistry fieldTypes;
+    private final java.util.Set<String> unresolvedTypes = new java.util.HashSet<>();
     private Pump pump;
 
     // Recipient RSA public keys (by share_code) — cached for per-person document
@@ -128,7 +147,7 @@ public final class Client {
         // every encrypt_payload webhook (no per-request PBKDF2).
         this.accountKey = Webhooks.loadAccountKey(config);
 
-        this.deps = new ModelDeps(this::decryptValue, this::typeForSlug, this::binaryFetch);
+        this.deps = new ModelDeps(this::decryptValue, this::typeForSlug, this::fieldTypes, this::binaryFetch);
     }
 
     private static void defaultSleep(double seconds) {
@@ -187,11 +206,46 @@ public final class Client {
         return BinaryFetchResult.encrypted(Wrapper.of(value), contentType, digest);
     }
 
+    /**
+     * Resolve a request slug to its field type (loads the catalog once).
+     *
+     * <p>The payload is the trigger, in two legs. The SLUG a value or a change names is what the
+     * held catalog may not carry, and no walk of that catalog can discover it; the slug itself
+     * asks for one catalog refetch. Only then can the type be read, and a type the held registry
+     * does not carry asks for one registry refetch. Both legs are bounded and both remember their
+     * misses.
+     */
     private String typeForSlug(String slug) {
         if (requestFields == null) {
             requestFields();
         }
-        return typeBySlug.get(slug);
+        if (!typeBySlug.containsKey(slug)) {
+            ensureSlugKnown(slug);
+        }
+        String type = typeBySlug.get(slug);
+        if (type != null && !type.isEmpty()) {
+            ensureTypesKnown(List.of(type));
+        }
+        return type;
+    }
+
+    /**
+     * One bounded refetch for a slug the held catalog does not carry.
+     *
+     * <p>A request slot configured after this client started is what makes a slug unknown here,
+     * and one refetch of the catalog is what resolves it — together with the type that slot
+     * introduced, which the refetched catalog puts through the registry heal. A slug still absent
+     * afterwards belongs to no slot this client can see, so it is remembered and never asked for
+     * again.
+     */
+    private void ensureSlugKnown(String slug) {
+        if (slug == null || slug.isEmpty() || typeBySlug.containsKey(slug) || unresolvedSlugs.contains(slug)) {
+            return;
+        }
+        loadRequestFields();
+        if (!typeBySlug.containsKey(slug)) {
+            unresolvedSlugs.add(slug);
+        }
     }
 
     // ── definitions ────────────────────────────────────────────────────────────
@@ -211,18 +265,87 @@ public final class Client {
      */
     public List<RequestField> requestFields() {
         if (requestFields == null) {
-            Object body = http.get(REQUEST_FIELDS);
-            List<RequestField> fields = RequestField.listFromApi(body);
-            requestFields = fields;
-            Map<String, String> byType = new LinkedHashMap<>();
-            for (RequestField f : fields) {
-                if (f.slug() != null) {
-                    byType.put(f.slug(), f.type());
-                }
-            }
-            typeBySlug = byType;
+            loadRequestFields();
         }
         return requestFields;
+    }
+
+    /** One fetch of the catalog, replacing the held one only once it has ARRIVED. */
+    private void loadRequestFields() {
+        Object body = http.get(REQUEST_FIELDS);
+        List<RequestField> fields = RequestField.listFromApi(body);
+        Map<String, String> byType = new LinkedHashMap<>();
+        for (RequestField f : fields) {
+            if (f.slug() != null) {
+                byType.put(f.slug(), f.type());
+            }
+        }
+        // The catalog is published only once the registry that types it has loaded. Publishing
+        // first would let a registry failure leave a cached catalog behind that no later call
+        // retries, and every value it types would then be read through a registry that knows
+        // nothing.
+        ensureTypesKnown(byType.values());
+        typeBySlug = byType;
+        requestFields = fields;
+    }
+
+    /**
+     * The field-type registry — what every TYPE in the catalog means.
+     *
+     * <p>Fetched from {@code GET /api/contact-field-types} beside the request-field catalog and
+     * held in memory for the life of the client. It says which primitive draws a type, which named
+     * check verifies it, which regexes it adds, which sub-fields it carries and on which storage
+     * lane its value lives — so a value's shape and a value's validity both follow the served rows
+     * rather than a list of type names.
+     */
+    public FieldTypeRegistry fieldTypes() {
+        if (fieldTypes == null) {
+            fieldTypes = loadFieldTypes();
+        }
+        return fieldTypes;
+    }
+
+    /**
+     * One fetch of the registry rows, with no caching of its own. A failure is raised, never
+     * answered with an empty registry: "unknown accepts anything" is a verdict about the
+     * deployment and must not stand in for a fetch that did not happen.
+     */
+    private FieldTypeRegistry loadFieldTypes() {
+        // The registry route answers JSON to every caller — it is not one of the company-data
+        // routes that honour the configured format — so its body is parsed as JSON whatever this
+        // client speaks elsewhere.
+        Object body = http.parseBodyAsJson(http.getResponse(FIELD_TYPES));
+        return new FieldTypeRegistry(body instanceof List<?> rows ? rows : List.of());
+    }
+
+    /**
+     * One bounded refetch when the held registry does not carry a type in use.
+     *
+     * <p>A row added to the registry after this client started is what makes a type unknown here,
+     * and one refetch is what resolves it. A type still absent afterwards is this deployment's
+     * answer, not a stale cache, so it is remembered and never asked for again.
+     */
+    private void ensureTypesKnown(java.util.Collection<String> types) {
+        FieldTypeRegistry registry = fieldTypes();
+        List<String> missing = new ArrayList<>();
+        for (String type : types) {
+            if (type != null && !type.isEmpty() && !registry.knows(type) && !unresolvedTypes.contains(type)) {
+                missing.add(type);
+            }
+        }
+        if (missing.isEmpty()) {
+            return;
+        }
+        // The refetch replaces the held registry only once it has ARRIVED. Clearing first would let
+        // a failed refetch leave no registry at all, and every type would then read as unknown — a
+        // verdict about the deployment standing in for a fetch that did not happen.
+        registry = loadFieldTypes();
+        fieldTypes = registry;
+        for (String type : missing) {
+            if (!registry.knows(type)) {
+                unresolvedTypes.add(type);
+            }
+        }
     }
 
     // ── connections (heavily rate-limited — initial sync / reconciliation) ─────
@@ -1116,10 +1239,18 @@ public final class Client {
         // Validate each freshly-typed answer against its field type from the pinned
         // definition, BEFORE encryption. Skip when the type can't be resolved.
         for (Map.Entry<String, Object> e : fill.entrySet()) {
-            String ft = fieldTypeForSlug(run.definition(), e.getKey());
-            if (ft != null && !ft.isEmpty()) {
+            Map<?, ?> element = fieldElementForSlug(run.definition(), e.getKey());
+            String ft = element == null ? null : fieldTypeOfElement(element);
+            if (element != null && ft != null && !ft.isEmpty()) {
                 String plainForCheck = e.getValue() instanceof String s ? s : Json.write(e.getValue());
-                if (!FieldValidation.isValid(ft, plainForCheck)) {
+                // The type is named by the pinned definition — a payload, not the request catalog —
+                // so it can be one the held registry has never seen. One bounded refetch resolves
+                // it; a type still absent afterwards validates as unknown, which accepts anything.
+                ensureTypesKnown(List.of(ft));
+                // A choice type whose ROW carries no options takes them from the ELEMENT, which is
+                // the only place they exist for select/multiselect. Passing them is what lets the
+                // answer be validated at all instead of being measured against an empty domain.
+                if (!fieldTypes().isFieldValueValid(ft, plainForCheck, fieldElementOptions(element))) {
                     throw new ValidationException(e.getKey(), ft);
                 }
             }
@@ -1389,13 +1520,12 @@ public final class Client {
     }
 
     /**
-     * Resolve a field element's {@code field_type} from the pinned flow definition by scanning
-     * every node's elements for a {@code kind:"field"} element with the given slug. Returns null
-     * when the slug is not a field element (or elements are absent) — callers then SKIP validation
-     * rather than invent a type.
+     * Resolve a fill slug to its field ELEMENT in the pinned flow definition by scanning every
+     * node's elements for a {@code kind:"field"} element with the given slug. Returns null when the
+     * slug is not a field element (or elements are absent) — callers then SKIP validation rather
+     * than invent a type.
      */
-    @SuppressWarnings("unchecked")
-    private static String fieldTypeForSlug(Map<String, Object> definition, String slug) {
+    private static Map<?, ?> fieldElementForSlug(Map<String, Object> definition, String slug) {
         Object nodes = definition.get("nodes");
         if (!(nodes instanceof List<?> nodeList)) {
             return null;
@@ -1413,16 +1543,42 @@ public final class Client {
                     continue;
                 }
                 if ("field".equals(em.get("kind")) && slug.equals(em.get("slug"))) {
-                    Object ft = em.get("field_type");
-                    if (ft instanceof String s && !s.isEmpty()) {
-                        return s;
-                    }
-                    Object t = em.get("type");
-                    return t instanceof String s2 ? s2 : null;
+                    return em;
                 }
             }
         }
         return null;
+    }
+
+    /** A field element's declared type, null when it names none. */
+    private static String fieldTypeOfElement(Map<?, ?> element) {
+        Object ft = element.get("field_type");
+        if (ft instanceof String s && !s.isEmpty()) {
+            return s;
+        }
+        Object t = element.get("type");
+        return t instanceof String s2 ? s2 : null;
+    }
+
+    /**
+     * The option VALUES a flow field element supplies.
+     *
+     * <p>An element's options are {@code {value, label, available_if?}} objects; the value is the
+     * domain member. null when the element carries none, which leaves the row's own options — if it
+     * has any — to govern.
+     */
+    private static List<String> fieldElementOptions(Map<?, ?> element) {
+        Object raw = element.get("options");
+        if (!(raw instanceof List<?> list)) {
+            return null;
+        }
+        List<String> values = new ArrayList<>();
+        for (Object o : list) {
+            if (o instanceof Map<?, ?> om && om.get("value") != null) {
+                values.add(String.valueOf(om.get("value")));
+            }
+        }
+        return values.isEmpty() ? null : values;
     }
 
     /** The party that owns {@code nodeKey} in the definition. */

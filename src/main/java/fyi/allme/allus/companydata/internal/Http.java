@@ -383,6 +383,14 @@ public final class Http {
         return parseBody(resp, "xml".equals(config.format()));
     }
 
+    /**
+     * Parse a response body as JSON whatever {@code format} this client speaks, for a route that
+     * answers JSON to every caller rather than honouring the configured format.
+     */
+    public Object parseBodyAsJson(Transport.Response resp) {
+        return parseBody(resp, false);
+    }
+
     private Object parseBody(Transport.Response resp, boolean wantsXml) {
         String text = resp.body();
         if (text == null || text.strip().isEmpty()) {

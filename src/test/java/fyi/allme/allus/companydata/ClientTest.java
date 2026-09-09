@@ -103,6 +103,12 @@ class ClientTest {
         @Override
         public Response get(String url, Map<String, String> params, Map<String, String> headers) {
             gets.add(new GetCall(url, params));
+            // The registry route is served the way a deployment serves it: the client fetches it
+            // beside the request-field catalog, and a fake that did not answer it would be testing
+            // an environment no deployment has.
+            if (url.endsWith("/api/contact-field-types")) {
+                return FakeTransport.json(200, TestFieldTypes.body());
+            }
             return router.apply(url, params);
         }
 
