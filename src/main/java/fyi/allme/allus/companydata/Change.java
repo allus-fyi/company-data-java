@@ -39,6 +39,11 @@ public record Change(
     String contentSha256, // set on a signature: SHA-256 of the signed content
     String signedAt,      // set on a signature: ISO timestamp the signature was recorded
     String cancelEffectiveDate, // set on a cancelled document_status_changed: ISO date the cancellation takes effect
+    String sealedAt, // set on document_status_changed: when the platform seal was applied; null until sealed
+    String plainSha256, // set on document_status_changed: SHA-256 of the document's unencrypted PDF bytes; null on a JSON contract
+    String signerFirstName, // set on document_status_changed: the signature's own signer evidence
+    String signerLastName,
+    Boolean signerNameVerified, // true iff the submitted name matched the signer's verified ID name; null when unset
     String requestId, // set on connection_request_accepted | connection_request_rejected
     String publicKeySha256, // set on key_rotated — SHA-256 fingerprint of the person's NEW public key
     String connectionId,    // set on message_received — the connection to reply/acknowledge on
@@ -83,6 +88,11 @@ public record Change(
         String contentSha256 = isDocStatus ? Parse.str(obj.get("content_sha256")) : null;
         String signedAt = isDocStatus ? Parse.str(obj.get("signed_at")) : null;
         String cancelEffectiveDate = isDocStatus ? Parse.str(obj.get("cancel_effective_date")) : null;
+        String sealedAt = isDocStatus ? Parse.str(obj.get("sealed_at")) : null;
+        String plainSha256 = isDocStatus ? Parse.str(obj.get("plain_sha256")) : null;
+        String signerFirstName = isDocStatus ? Parse.str(obj.get("signer_first_name")) : null;
+        String signerLastName = isDocStatus ? Parse.str(obj.get("signer_last_name")) : null;
+        Boolean signerNameVerified = isDocStatus ? Parse.boolOrNull(obj.get("signer_name_verified")) : null;
 
         // connection_request_accepted/_rejected carry the request_id (no slot/value).
         String requestId = ("connection_request_accepted".equals(event)
@@ -113,7 +123,8 @@ public record Change(
         return new Change(
             Parse.str(obj.get("id")), event, personId,
             Parse.str(obj.get("share_code")), Parse.str(obj.get("customer_type")), slug, value, live,
-            documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate, requestId,
+            documentId, status, action, note, method, contentSha256, signedAt, cancelEffectiveDate,
+            sealedAt, plainSha256, signerFirstName, signerLastName, signerNameVerified, requestId,
             publicKeySha256, connectionId, messageId, personPublicKey, messageBody,
             Value.verifiedFrom(obj, value),
             Parse.isoDateTime(obj.get("verified_at")),

@@ -765,6 +765,8 @@ public final class Client {
         if (req.fileBytes == null) {
             throw new ConfigException("fileBytes is required for payloadKind='file'");
         }
+        body.put("plain_sha256", req.plainSha256 != null && !req.plainSha256.isEmpty()
+            ? req.plainSha256 : Crypto.computePlainSha256(req.fileBytes));
         Object created = http.post(DOCUMENTS, body);
         Document doc = Document.fromApi(docObj(created), this::decryptValue);
         String fileUrl = DOCUMENTS + "/" + doc.id() + "/file";
@@ -1397,6 +1399,10 @@ public final class Client {
         private String fileName;             // explicit original_name for a broadcast file upload
         private boolean requiresSignature = false;   // contract: the person must sign (step-up)
         private boolean requiresAcceptance = false;  // contract: the person must accept
+        // For payloadKind="file": SHA-256 of fileBytes (lowercase hex) — required by the server for
+        // a signable file document, optional for any other, ignored for payloadKind="json".
+        // Computed via Crypto.computePlainSha256 when not set.
+        private String plainSha256;
         private Map<String, Object> metadata;
         private String status;
 
@@ -1418,6 +1424,7 @@ public final class Client {
         public CreateDocumentRequest fileName(String v) { this.fileName = v; return this; }
         public CreateDocumentRequest requiresSignature(boolean v) { this.requiresSignature = v; return this; }
         public CreateDocumentRequest requiresAcceptance(boolean v) { this.requiresAcceptance = v; return this; }
+        public CreateDocumentRequest plainSha256(String v) { this.plainSha256 = v; return this; }
         public CreateDocumentRequest metadata(Map<String, Object> v) { this.metadata = v; return this; }
         public CreateDocumentRequest status(String v) { this.status = v; return this; }
     }

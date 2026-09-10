@@ -329,6 +329,22 @@ public final class Crypto {
     }
 
     /**
+     * SHA-256 of raw PDF bytes, lowercase hex — the plainSha256 a signable file document's
+     * create call and every sign/accept act must agree on. Exposed so a caller can precompute
+     * or verify it; createDocument calls this itself when a plainSha256 override is not given.
+     */
+    public static String computePlainSha256(byte[] data) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /**
      * Verified fields: true iff sha256(salt ‖ plaintext) == expectedHash (hex). Consumers
      * recompute this from the plaintext they just decrypted and trust the verified flag only on a match.
      */

@@ -620,6 +620,8 @@ Document contract = client.createDocument(CreateDocumentRequest.builder()
     .fileMime("application/pdf")
     .connectionId("019xxxxxxxxxxxxxxxxxxxxxxxxx")   // or .personUserId(...) / .shareCode(...)
     .isPrivate(true)                                 // recipient app shows it behind a lock
+    .requiresSignature(true)
+    // .plainSha256(Crypto.computePlainSha256(pdf))  // optional — computed for you otherwise
     .status("ready_to_sign"));
 
 System.out.println(contract.id() + " " + contract.status());
@@ -671,7 +673,28 @@ client.deleteDocument(doc.id());
 
 `Document` carries `id()`, `kind()`, `name()`, `description()`, `status()`,
 `payloadKind()`, `isPrivate()`, `value()`, `metadata()`, `createdAt()`,
-`updatedAt()`, plus `.json()` (json docs) and `.raw()`.
+`updatedAt()`, `plainSha256()`, `sealedAt()`, `signatures()`, plus `.json()`
+(json docs) and `.raw()`. For `payloadKind="file"`, `CreateDocumentRequest`'s
+`plainSha256` (SHA-256 of `fileBytes`, lowercase hex) is computed via
+`Crypto.computePlainSha256` when not set — required by the server for a
+signable file document (`requiresSignature`/`requiresAcceptance`), optional
+for any other, ignored for `payloadKind="json"`.
+
+**The document seal.** Completing every required signature/acceptance on a
+signable document is not the same as sealing it. When the last one is recorded
+the platform *attempts*, on that same request, to append a Signatures page and
+sign the whole PDF with a platform certificate, replacing every party's copy
+with the sealed one. The attempt can fail (no PDF bytes on the completing act,
+a byte mismatch, the sealing service unavailable, or a custodian-completed ward
+act) without affecting the signatures or the document's completed status — it
+is simply left unsealed, and any party can seal it afterwards from their own
+device or the owning company's portal (no SDK call triggers a seal).
+`doc.sealedAt()` is `null` until a seal actually succeeds; `doc.plainSha256()`
+is the SHA-256 of the document's unencrypted PDF bytes (`null` on a json
+document, and on a file document with no stored plaintext hash). Each entry of
+`doc.signatures()` additionally carries `plain_sha256`, `signer_first_name`,
+`signer_last_name` and `signer_name_verified` beside its existing
+`action`/`method`/`content_sha256`/`ip`/`user_agent`/`created_at` keys.
 
 A contract-flow-generated document can also read `status() == "waiting"` — a
 run-participant copy whose signer has not been reached yet in the run's ordered
@@ -710,7 +733,10 @@ if ("completed".equals(run.status())) {
 When a document's lifecycle status changes, the platform emits a
 `document_status_changed` change event. It rides the same pump / webhook channel
 as field changes — the `Change` carries `documentId()` and `status()` (no
-slot/value):
+slot/value). A transition to `active` additionally carries `sealedAt()`,
+`plainSha256()`, `signerFirstName()`, `signerLastName()` and
+`signerNameVerified()` — the same seal state the document read carries, so you
+never need a follow-up `document(id)` call just to learn a run sealed:
 
 ```java
 client.processChanges(change -> {

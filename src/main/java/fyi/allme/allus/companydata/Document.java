@@ -39,7 +39,12 @@ public record Document(
     OffsetDateTime updatedAt,
     boolean requiresSignature,   // contract: the person must sign
     boolean requiresAcceptance,  // contract: the person must accept
-    List<Map<String, Object>> signatures,  // contract sign/accept audit trail (company-side reads only)
+    String plainSha256,          // SHA-256 of the unencrypted PDF bytes; null on a JSON contract
+    OffsetDateTime sealedAt,     // when the platform seal was applied; null until sealed
+    // Contract sign/accept audit trail (company-side reads only), one map per signature: action,
+    // method, content_sha256, plain_sha256, signer_first_name, signer_last_name,
+    // signer_name_verified, ip, user_agent, created_at.
+    List<Map<String, Object>> signatures,
     // Present only on a contract-flow run-participant document: the run's ordered signature
     // summary, one entry per participant owing an act — each
     // {party_key, document_id, position, status, action, acted_at}. Null on any other document.
@@ -85,6 +90,23 @@ public record Document(
         return enc != null && "1".equals(String.valueOf(enc));
     }
 
+    /**
+     * Coerce the one schema-defined boolean inside a signature map entry. The
+     * map stays untyped (matching every existing signature field), but
+     * signerNameVerified is a boolean in the schema — XML carries it as the
+     * string "false"/"true", and a caller testing that raw string for
+     * truthiness reads a false verification as verified. Coerce it the same
+     * way every other boolean field on this transport is coerced.
+     */
+    private static Map<String, Object> normalizeSignatureMap(Map<String, Object> sm) {
+        if (!sm.containsKey("signer_name_verified")) {
+            return sm;
+        }
+        Map<String, Object> copy = new java.util.LinkedHashMap<>(sm);
+        copy.put("signer_name_verified", Parse.boolOrNull(sm.get("signer_name_verified")));
+        return copy;
+    }
+
     @SuppressWarnings("unchecked")
     static Document fromApi(Map<String, Object> obj, Function<Object, String> decryptValue) {
         Object meta = obj.get("metadata");
@@ -93,7 +115,7 @@ public record Document(
         if (obj.get("signatures") instanceof List<?> sigs) {
             for (Object s : sigs) {
                 if (s instanceof Map<?, ?> sm) {
-                    signatures.add((Map<String, Object>) sm);
+                    signatures.add(normalizeSignatureMap((Map<String, Object>) sm));
                 }
             }
         }
@@ -120,6 +142,8 @@ public record Document(
             Parse.isoDateTime(obj.get("updated_at")),
             Parse.bool(obj.get("requires_signature")),
             Parse.bool(obj.get("requires_acceptance")),
+            Parse.str(obj.get("plain_sha256")),
+            Parse.isoDateTime(obj.get("sealed_at")),
             signatures,
             runSignatures,
             decryptValue,
