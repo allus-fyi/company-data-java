@@ -8,6 +8,7 @@ import fyi.allme.allus.companydata.RateLimitException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.DoubleConsumer;
 import java.util.function.LongSupplier;
@@ -209,9 +210,10 @@ public final class Http {
      * GET {@code path} → the whole 2xx {@link Transport.Response} — status, headers AND raw body,
      * with no parse.
      *
-     * <p>The company-facing binary file endpoints have two 200 shapes (a JSON wrapper for an
-     * encrypted answer, the raw file bytes for a plaintext one) that are told apart by
-     * {@code Content-Type}, and both carry an {@code X-Allus-Content-Sha256} digest header. Neither
+     * <p>The company-facing binary file endpoints have three 200 shapes (a JSON wrapper for an
+     * encrypted answer, a JSON plaintext envelope, the raw file bytes) — the bytes shape told apart
+     * by {@code Content-Type} and the two JSON ones by the body's {@code encrypted} member — and all
+     * three carry an {@code X-Allus-Content-Sha256} digest header. Neither
      * {@link #get} (which parses) nor {@link #getRaw} (which drops the headers) can express that, so
      * this hands the caller the response itself — {@link #parseBody(Transport.Response)} does the
      * format-aware parse afterwards when the caller decides it wants one. Auth/refresh/retry and
@@ -389,6 +391,17 @@ public final class Http {
      */
     public Object parseBodyAsJson(Transport.Response resp) {
         return parseBody(resp, false);
+    }
+
+    /**
+     * Parse a response body by what the RESPONSE says it is, for a route whose structured arms are
+     * {@code application/json} whatever the client speaks — the binary file routes. A body a client
+     * configured for XML parsed as XML would be unreadable there.
+     */
+    public Object parseBodyByContentType(Transport.Response resp) {
+        String contentType = resp.header("Content-Type");
+        boolean isXml = contentType != null && contentType.toLowerCase(Locale.ROOT).contains("xml");
+        return parseBody(resp, isXml);
     }
 
     private Object parseBody(Transport.Response resp, boolean wantsXml) {

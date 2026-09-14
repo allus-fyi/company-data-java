@@ -98,34 +98,58 @@ A lazy handle for a binary value. No network or decryption happens at constructi
 ```java
 class BinaryHandle {
     String valueUrl();             // the opaque slot-keyed file URL (read-only; may be null)
-    byte[] bytes();                // fetch (if needed) → the primary file bytes, either shape
+    byte[] bytes();                // fetch (if needed) → the primary file bytes
     long   save(Path path);        // write bytes() to path atomically; returns bytes written
     long   save(String path);
-    String contentSha256();        // X-Allus-Content-Sha256 of the fetched bytes (null until fetched)
-    String contentType();          // the Content-Type they arrived with (null until fetched)
+    List<BinaryPage>    pages();   // the envelope's pages, in order (empty for a single-file one)
+    Map<String, String> metadata();// the type's declared entries (null values for unset ones)
+    String contentSha256();        // X-Allus-Content-Sha256 of the SERVED ARTIFACT (null until fetched)
+    String contentType();          // the Content-Type the answer arrived with (null until fetched)
 }
+
+record BinaryPage(
+    String label,   // front | back | additional
+    String name,    // the original filename
+    String mime,    // the server-derived media type
+    byte[] bytes) {}
 ```
 
-#590 — the slot file endpoint has **two** 200 shapes, chosen by whether the
-**person's** source field is private. The company cannot predict or control which
-arrives, and `.bytes()`/`.save()` return the file bytes for both, so you never
-branch on it:
+The slot file endpoint has **three** 200 shapes, chosen by whether the **person's**
+source field is private AND by the TYPE of the field they answered with. The company
+cannot predict or control which arrives, and the handle absorbs the difference, so you
+never branch on it:
 
-| Person's source field | Response | What the handle does |
+| Answer | Response | What the handle does |
 |---|---|---|
-| private | `application/json`, `{"encrypted": true, "value": <wrapper>}` | Decrypt the inner `{"_enc":1,…}` wrapper with the service key → a JSON file-envelope string (`{"full": "data:…", "thumb": …}` for photos, `{"file": "data:…", …}` for documents) → base64-decode the primary data URI (`full` for photos, `file` for documents). |
-| not private | the file's own `Content-Type` (`image/jpeg`, `application/pdf`, …), body **is** the file | Serve the body as-is. Nothing to decrypt; no service key needed. |
+| private source | `application/json`, `{"encrypted": true, "value": <wrapper>}` | Decrypt the inner `{"_enc":1,…}` wrapper with the service key → the JSON ENVELOPE string. |
+| non-private, type stores pages or declares entries | `application/json`, `{"encrypted": false, "value": "<envelope>"}` | Read that envelope string as-is. Nothing to decrypt. |
+| every other non-private source | the file's own `Content-Type` (`image/jpeg`, `application/pdf`, …), body **is** the file | Serve the body as-is. Nothing to decrypt; no service key needed. |
 
-The shape is decided on the response `Content-Type` alone — a missing or
-JSON/XML one means the wrapper, anything else means the file — and never by
-sniffing the body. There is no variant selection: one slot has one byte sequence,
-and photos always resolve to `full`.
+The raw-bytes shape is decided on the response `Content-Type` alone — a missing or
+JSON/XML one means a JSON body, anything else means the file — and never by sniffing
+the body; inside a JSON body it is `encrypted` that decides. Photos always resolve to
+`full`.
+The envelope is a photo's `{"full": "data:…", "thumb": …}`, a single-file document's
+`{"file": "data:…", …}`, or a multi-page document's
+`{"pages": [{"label": …, "file": "data:…", …}], …}`, with every entry the type declares
+beside it.
 
-Both shapes carry `X-Allus-Content-Sha256`, the sha256 of exactly the bytes
-returned; `contentSha256()` hands it back. It is the platform's word about its own
-record, not a signature you can show a third party.
+`pages()` answers the pages of a multi-page envelope in order, and an empty list for a
+single-file one. `metadata()` answers every envelope member other than `pages`, `file`,
+`full`, `thumb`, `original_name`, `mime_type` and `size`, so a passport's
+`document_number`, `expiry_date`, `issuing_country` and `name` are all there; **it
+carries no ordering guarantee** — read the envelope string yourself if you need the
+declared order. **`bytes()`/`save()` throw
+`DecryptException("multi-page envelope: use pages")` on a multi-page envelope** rather
+than handing back the front page as though it were the whole document.
 
-The fetched result is cached on the handle (repeated calls don't re-fetch).
+All of the accessors share ONE lazy fetch: whichever is called first performs it, and
+the result is cached (repeated calls don't re-fetch). The digest header
+`X-Allus-Content-Sha256` is the sha256 of the **served artifact** — the raw bytes on the
+bytes shape, the served `value` string on either JSON shape — not "the sha256 of what
+`bytes()` returns", which is false on a multi-page envelope. There is no variant
+selection.
+
 `.save(...)` writes crash-safely (temp file → `FileChannel.force(true)` fsync →
 `Files.move(ATOMIC_MOVE)`). An unanswered binary slot yields an empty handle;
 calling `.bytes()` on it throws `DecryptException`.

@@ -713,13 +713,34 @@ public final class CompanyDataHandlers {
             return v.toString();
         }
         if (v instanceof BinaryHandle h) {
-            try {
-                return "[binary " + h.bytes().length + " bytes]";
-            } catch (Throwable t) {
-                return "[binary value]";
-            }
+            return binaryDescriptor(h);
         }
         return String.valueOf(v);
+    }
+
+    /**
+     * The one-line descriptor every SDK example prints for a fetched binary.
+     *
+     * <p>The PAGE COUNT for a multi-page envelope (whose {@link BinaryHandle#bytes()} has no single
+     * answer), the byte length otherwise, and the declared metadata keys whenever the envelope
+     * carries any — so a {@code legal_document} shows its byte length AND its
+     * {@code document_number}/{@code expiry_date}. Keys are sorted, because the metadata map carries
+     * no ordering guarantee.
+     */
+    private static String binaryDescriptor(BinaryHandle handle) {
+        try {
+            var pages = handle.pages();
+            var head = new StringBuilder(pages.isEmpty()
+                ? "binary " + handle.bytes().length + " bytes"
+                : "binary " + pages.size() + " pages");
+            var meta = handle.metadata();
+            if (!meta.isEmpty()) {
+                head.append("; meta: ").append(String.join(", ", new java.util.TreeSet<>(meta.keySet())));
+            }
+            return "[" + head + "]";
+        } catch (Throwable t) {
+            return "[binary value]";
+        }
     }
 
     private static String iso(OffsetDateTime t) {

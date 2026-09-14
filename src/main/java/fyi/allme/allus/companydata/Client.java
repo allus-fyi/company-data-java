@@ -179,13 +179,16 @@ public final class Client {
     /**
      * Fetch a company-facing binary file endpoint and classify its response.
      *
-     * <p>The endpoint has TWO 200 shapes and which one arrives is not the company's to
+     * <p>The endpoint has THREE 200 shapes and which one arrives is not the company's to
      * predict: a person whose source field is PRIVATE yields {@code application/json}
-     * {@code {"encrypted":true,"value":<wrapper>}}, a person whose field is not yields the file's
-     * own Content-Type and the bytes themselves. The decision is
-     * {@link BinaryFetchResult#isPlaintextShape}'s and is made on {@code Content-Type} alone, never
-     * by sniffing the body — a PDF or an image that happened to start with a brace would be
-     * indistinguishable from a wrapper.
+     * {@code {"encrypted":true,"value":<wrapper>}}; a NON-PRIVATE source whose type stores more
+     * than one file or declares metadata entries yields
+     * {@code {"encrypted":false,"value":"<envelope>"}}; every other non-private source yields the
+     * file's own Content-Type and the bytes themselves. The bytes shape is
+     * {@link BinaryFetchResult#isPlaintextShape}'s decision and is made on {@code Content-Type}
+     * alone, never by sniffing the body — a PDF or an image that happened to start with a brace
+     * would be indistinguishable from a wrapper — and inside a JSON body it is {@code encrypted}
+     * that decides.
      *
      * <p>A 410 {@code company_data.file_expired} (the answer's 90-day retention has elapsed)
      * surfaces as an {@link ApiException} whose {@link ApiException#details()} carry
@@ -200,7 +203,17 @@ public final class Client {
             return BinaryFetchResult.plaintext(resp.bodyBytes(), contentType, digest);
         }
 
-        Object body = http.parseBody(resp);
+        // Parsed by what the RESPONSE says it is, never by the configured format: these four routes
+        // answer application/json on both structured arms whatever the client speaks.
+        Object body = http.parseBodyByContentType(resp);
+        // `encrypted: false` with a string `value` is the PLAINTEXT ENVELOPE arm; every other JSON
+        // body is the wrapper arm, which is what the bare-wrapper routes (a company's own contract
+        // copy, its run slot file) answer with.
+        if (body instanceof Map<?, ?> json
+            && Boolean.FALSE.equals(json.get("encrypted"))
+            && json.get("value") instanceof String envelope) {
+            return BinaryFetchResult.envelope(envelope, contentType, digest);
+        }
         // Defensive: some shapes might return the wrapper directly.
         Object value = body instanceof Map<?, ?> m && m.containsKey("value") ? m.get("value") : body;
         return BinaryFetchResult.encrypted(Wrapper.of(value), contentType, digest);
