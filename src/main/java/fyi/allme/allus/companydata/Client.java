@@ -1291,7 +1291,7 @@ public final class Client {
             answersOut.add(answer);
         }
 
-        NextNode next = computeNextNode(run.definition(), run.currentNode(), full);
+        NextNode next = computeNextNode(run.definition(), run.currentNode(), full, run.referenceDate());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("answers", answersOut);
         if (next.leaf) {
@@ -1379,7 +1379,7 @@ public final class Client {
         }
         Map<String, Object> merged = new LinkedHashMap<>(answers);
         merged.putAll(fill);
-        boolean wasLeaf = computeNextNode(run.definition(), run.currentNode(), merged).leaf;
+        boolean wasLeaf = computeNextNode(run.definition(), run.currentNode(), merged, run.referenceDate()).leaf;
         run = submitFlowAnswers(run, fill, partyPubKeys);
         String mode = run.outputMode();
         if (mode == null || mode.isEmpty()) {
@@ -1496,12 +1496,13 @@ public final class Client {
     }
 
     /**
-     * The next node after {@code fromKey} — ordered outgoing edges, first match wins. Leaf is true
-     * when there is no outgoing edge or none matched (a dead-end is a leaf, matching the platform).
+     * The next node after {@code fromKey}: ordered outgoing edges, first match wins.
+     * Conditions use the answers plus computed constants at the run reference date.
+     * No matching outgoing edge means a leaf.
      */
     @SuppressWarnings("unchecked")
     private static NextNode computeNextNode(Map<String, Object> definition, String fromKey,
-            Map<String, Object> answers) {
+            Map<String, Object> answers, String referenceDate) {
         Object edgesObj = definition.get("edges");
         List<Map<String, Object>> edges = new ArrayList<>();
         if (edgesObj instanceof List<?> l) {
@@ -1516,8 +1517,11 @@ public final class Client {
         }
         // Stable sort by the "sort" field (ties keep declaration order).
         edges.sort((a, b) -> Double.compare(edgeSort(a), edgeSort(b)));
+        Object constantsObj = definition.get("constants");
+        List<Object> constants = constantsObj instanceof List<?> cl ? (List<Object>) cl : List.of();
+        Map<String, Object> materialized = FlowCondition.computeConstants(constants, answers, referenceDate);
         for (Map<String, Object> e : edges) {
-            if (FlowCondition.evaluate(e.get("condition"), answers)) {
+            if (FlowCondition.evaluate(e.get("condition"), materialized)) {
                 return new NextNode(false, e.get("to") == null ? null : String.valueOf(e.get("to")));
             }
         }
