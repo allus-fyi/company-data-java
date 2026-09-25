@@ -65,6 +65,10 @@ public final class Client {
 
     private final Config config;
     private final Http http;
+    // The plain transport plugin calls reach the forwarder over — never the API transport, which
+    // attaches the bearer token and rewrites the base URL.
+    private final fyi.allme.allus.companydata.internal.Transport pluginTransport =
+        PluginFlowParty.newTransport();
     /** 2FA-by-allme — the relying-party challenge API, lazily built (see {@link #twoFactor()}). */
     private TwoFactorClient twoFactor;
     private final Logger log;
@@ -342,7 +346,8 @@ public final class Client {
         FieldTypeRegistry registry = fieldTypes();
         List<String> missing = new ArrayList<>();
         for (String type : types) {
-            if (type != null && !type.isEmpty() && !registry.knows(type) && !unresolvedTypes.contains(type)) {
+            if (type != null && !type.isEmpty() && !PluginValue.TYPE_KEY.equals(type)
+                    && !registry.knows(type) && !unresolvedTypes.contains(type)) {
                 missing.add(type);
             }
         }
@@ -1271,6 +1276,15 @@ public final class Client {
             }
         }
 
+        // A field's min and max are expressions over the live answer map (plugin outputs
+        // included); a value outside them is refused before anything is encrypted.
+        Map<String, Object> live = PluginFlowParty.liveAnswers(run, answersSoFar, fill);
+        for (Map.Entry<String, Object> e : fill.entrySet()) {
+            PluginFlowParty.checkBounds(run, e.getKey(), e.getValue(), live);
+        }
+
+        java.util.Set<String> sourcePrivate =
+            PluginFlowParty.sourcePrivate(run, fill.keySet(), run.serviceUserId());
         List<Object> answersOut = new ArrayList<>();
         for (Map.Entry<String, Object> e : fill.entrySet()) {
             String slug = e.getKey();
@@ -1288,6 +1302,10 @@ public final class Client {
             Map<String, Object> answer = new LinkedHashMap<>();
             answer.put("slug", slug);
             answer.put("values", values);
+            if (sourcePrivate.contains(slug)) {
+                // The value came from a private source: a default reaching one.
+                answer.put("source_private", true);
+            }
             answersOut.add(answer);
         }
 
@@ -1302,6 +1320,67 @@ public final class Client {
         }
         Object res = http.post(FLOW_RUNS + "/" + run.id() + "/answers", body);
         return FlowRun.fromApi(res);
+    }
+
+    // ── plugins on the company's flow steps ─────────────────────────────────────
+
+    /**
+     * A pass to the plugins of the plugin elements on the run's current step
+     * ({@code POST /api/company-data/flow-runs/{runId}/plugin-pass}). The run must be awaiting the
+     * company.
+     */
+    public PluginPass pluginPass(String runId) {
+        return PluginPass.fromApi(http.post(FLOW_RUNS + "/" + runId + "/plugin-pass", null));
+    }
+
+    private PluginFlowParty pluginParty(String runId) {
+        return new PluginFlowParty(pluginTransport, () -> flowRun(runId), () -> pluginPass(runId),
+            this::decryptRunAnswers, FlowRun::serviceUserId);
+    }
+
+    /**
+     * Ask the plugin behind the plugin element {@code slug} for the options of one search_select
+     * {@code block}. {@code query} filters them ({@code ""} lists everything); {@code picks} holds
+     * the ids picked so far by block key and {@code values} the typed block values.
+     *
+     * <p>{@code draft} holds the current step's answers not yet submitted (slug → plaintext; may be
+     * null). The plugin's inputs are read from ONE live answer map — the run's stored answers,
+     * overlaid with {@code draft} for the current step's slugs, plugin answers expanded, constants
+     * computed — and converted to their declared types. An input that is another party's private
+     * value (a slug in {@link FlowRun#privateSlugs()}, a constant reaching one, or a draft whose
+     * field's default reaches one) is never sent: a required one throws
+     * {@link PluginInputUnavailableException}.
+     *
+     * <p>The request is sealed to the plugin's public key and posted to the forwarder over a plain
+     * transport that carries no allme credential; the reply is sealed to a key pair made for the
+     * call and opened here.
+     */
+    public PluginOptionsResult pluginOptions(String runId, String slug, String block, String query,
+            Map<String, String> picks, Map<String, Object> values, Map<String, Object> draft) {
+        return pluginParty(runId).options(slug, block, query, picks, values, draft);
+    }
+
+    /**
+     * Ask the plugin behind the plugin element {@code slug} for the outputs of the picks and typed
+     * values so far, reading inputs as {@link #pluginOptions} does. Answers {@link PluginOutputs},
+     * or {@link PluginPicksInvalid} when the picks no longer fit; after changing an input, call it
+     * again before submitting.
+     */
+    public PluginOutputsResult pluginOutputs(String runId, String slug, Map<String, String> picks,
+            Map<String, Object> values, Map<String, Object> draft) {
+        return pluginParty(runId).outputs(slug, picks, values, draft);
+    }
+
+    /**
+     * Apply {@code slug}'s min and max to {@code value} over the live answer map (the stored answers
+     * overlaid with {@code draft}, plugin answers expanded, constants computed).
+     * {@link #submitFlowAnswers} applies the same check to every value it submits.
+     *
+     * @throws ValidationException naming the broken bound
+     */
+    public void checkFlowValue(FlowRun run, String slug, Object value, Map<String, Object> draft) {
+        PluginFlowParty.checkBounds(run, slug, value,
+            PluginFlowParty.liveAnswers(run, decryptRunAnswers(run), draft));
     }
 
     /**
@@ -1482,7 +1561,7 @@ public final class Client {
 
     /** Look up a node by key in the pinned definition graph. */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> nodeByKey(Map<String, Object> definition, String key) {
+    static Map<String, Object> nodeByKey(Map<String, Object> definition, String key) {
         Object nodes = definition.get("nodes");
         if (!(nodes instanceof List<?> l)) {
             return null;
@@ -1497,7 +1576,8 @@ public final class Client {
 
     /**
      * The next node after {@code fromKey}: ordered outgoing edges, first match wins.
-     * Conditions use the answers plus computed constants at the run reference date.
+     * Conditions use the answers — plugin answers expanded — plus computed constants at the run
+     * reference date.
      * No matching outgoing edge means a leaf.
      */
     @SuppressWarnings("unchecked")
@@ -1519,7 +1599,9 @@ public final class Client {
         edges.sort((a, b) -> Double.compare(edgeSort(a), edgeSort(b)));
         Object constantsObj = definition.get("constants");
         List<Object> constants = constantsObj instanceof List<?> cl ? (List<Object>) cl : List.of();
-        Map<String, Object> materialized = FlowCondition.computeConstants(constants, answers, referenceDate);
+        Map<String, Object> materialized = FlowCondition.computeConstants(
+            constants, FlowCondition.expandPluginAnswers(answers, PluginFlowParty.pluginSlugsOf(definition)),
+            referenceDate);
         for (Map<String, Object> e : edges) {
             if (FlowCondition.evaluate(e.get("condition"), materialized)) {
                 return new NextNode(false, e.get("to") == null ? null : String.valueOf(e.get("to")));
@@ -1549,7 +1631,7 @@ public final class Client {
      * slug is not a field element (or elements are absent) — callers then SKIP validation rather
      * than invent a type.
      */
-    private static Map<?, ?> fieldElementForSlug(Map<String, Object> definition, String slug) {
+    static Map<?, ?> fieldElementForSlug(Map<String, Object> definition, String slug) {
         Object nodes = definition.get("nodes");
         if (!(nodes instanceof List<?> nodeList)) {
             return null;
@@ -1575,7 +1657,7 @@ public final class Client {
     }
 
     /** A field element's declared type, null when it names none. */
-    private static String fieldTypeOfElement(Map<?, ?> element) {
+    static String fieldTypeOfElement(Map<?, ?> element) {
         Object ft = element.get("field_type");
         if (ft instanceof String s && !s.isEmpty()) {
             return s;
@@ -1606,7 +1688,7 @@ public final class Client {
     }
 
     /** The party that owns {@code nodeKey} in the definition. */
-    private static String partyOf(Map<String, Object> definition, String nodeKey) {
+    static String partyOf(Map<String, Object> definition, String nodeKey) {
         Map<String, Object> node = nodeByKey(definition, nodeKey);
         if (node == null) {
             return null;

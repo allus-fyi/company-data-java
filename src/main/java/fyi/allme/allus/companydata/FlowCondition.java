@@ -1,16 +1,22 @@
 package fyi.allme.allus.companydata;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import fyi.allme.allus.companydata.internal.Json;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.StringJoiner;
+import java.util.regex.Pattern;
 
 /**
  * Pure port of the platform {@code FlowConditionEvaluator} (A-spec §4) — pinned to the shared
@@ -130,7 +136,7 @@ public final class FlowCondition {
         }
     }
 
-    private static boolean answered(Object v) {
+    static boolean answered(Object v) {
         if (v == null) {
             return false;
         }
@@ -153,7 +159,7 @@ public final class FlowCondition {
         return false;
     }
 
-    private static Double toNum(Object v) {
+    static Double toNum(Object v) {
         if (v instanceof Boolean) {
             return null;
         }
@@ -200,7 +206,7 @@ public final class FlowCondition {
         return n != null ? n != 0.0 : true;
     }
 
-    private static String str(Object v) {
+    static String str(Object v) {
         if (v == null) {
             return "";
         }
@@ -332,6 +338,21 @@ public final class FlowCondition {
      */
     public static Map<String, Object> resolvedConstants(
             List<Object> constants, Map<String, Object> answers, String referenceDate) {
+        return resolvedConstants(constants, answers, referenceDate, null);
+    }
+
+    /**
+     * {@link #resolvedConstants(List, Map, String)} over plugin answers: the stored answers of the
+     * definition's plugin elements ({@code pluginSlugs}) are expanded with
+     * {@link #expandPluginAnswers} first, so a constant can read a plugin output such as
+     * {@code cao.min_wage}. A {@code null} {@code pluginSlugs} expands nothing.
+     */
+    public static Map<String, Object> resolvedConstants(
+            List<Object> constants, Map<String, Object> answers, String referenceDate,
+            Collection<String> pluginSlugs) {
+        if (pluginSlugs != null) {
+            answers = expandPluginAnswers(answers, pluginSlugs);
+        }
         Map<String, Object> full = computeConstants(constants, answers, referenceDate);
         Map<String, Object> out = new LinkedHashMap<>();
         if (constants != null) {
@@ -343,6 +364,138 @@ public final class FlowCondition {
             }
         }
         return out;
+    }
+
+    // ── plugin answers ──────────────────────────────────────────────────────────
+
+    // The key shape a plugin block or output must have to be readable as "<slug>.<key>"; the key
+    // "id" is reserved for a pick's id.
+    private static final Pattern PLUGIN_KEY = Pattern.compile("^[a-z][a-z0-9_]{0,39}$");
+
+    private static boolean pluginKeyUsable(Object key) {
+        return key instanceof String k && !k.equals("id") && PLUGIN_KEY.matcher(k).matches();
+    }
+
+    // A stored plugin answer parsed as a JSON object, or null when it is not one.
+    private static Map<String, Object> parsePluginPlaintext(String plaintext) {
+        if (plaintext == null) {
+            return null;
+        }
+        try {
+            Object parsed = Json.parse(plaintext);
+            return asMap(parsed);
+        } catch (JsonProcessingException exc) {
+            return null;
+        }
+    }
+
+    private static boolean pluginFinished(Map<String, Object> obj) {
+        return obj != null && obj.get("outputs") instanceof List<?>;
+    }
+
+    // The value of every block, in stored order, joined by " / ".
+    private static String pluginSummaryOf(Map<String, Object> obj) {
+        StringJoiner sj = new StringJoiner(" / ");
+        for (Object b : asList(obj.get("blocks"))) {
+            Map<String, Object> bm = asMap(b);
+            sj.add(str(bm == null ? null : bm.get("value")));
+        }
+        return sj.toString();
+    }
+
+    /**
+     * A NEW answer map in which every finished plugin answer named by {@code pluginSlugs} is
+     * replaced by its summary (the block values joined by {@code " / "}) and joined by
+     * {@code <slug>.<block>} (the block's value), {@code <slug>.<block>.id} (a
+     * {@code search_select} pick's id) and {@code <slug>.<output>} (the output's typed value; a
+     * null output adds no key). A plugin answer that parses but carries no {@code outputs} array is
+     * unfinished and its entry is removed; a value that is not a JSON object is left as it is. The
+     * input map is not changed and a slug outside {@code pluginSlugs} is never touched.
+     */
+    public static Map<String, Object> expandPluginAnswers(
+            Map<String, Object> answers, Collection<String> pluginSlugs) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (answers != null) {
+            out.putAll(answers);
+        }
+        if (answers == null || pluginSlugs == null) {
+            return out;
+        }
+        for (String slug : pluginSlugs) {
+            if (!answers.containsKey(slug) || !(answers.get(slug) instanceof String text)) {
+                continue;
+            }
+            Map<String, Object> obj = parsePluginPlaintext(text);
+            if (obj == null) {
+                continue;
+            }
+            if (!pluginFinished(obj)) {
+                out.remove(slug);
+                continue;
+            }
+            out.put(slug, pluginSummaryOf(obj));
+            for (Object b : asList(obj.get("blocks"))) {
+                Map<String, Object> bm = asMap(b);
+                if (bm == null || !pluginKeyUsable(bm.get("key"))) {
+                    continue;
+                }
+                String key = (String) bm.get("key");
+                if (bm.get("value") != null) {
+                    out.put(slug + "." + key, bm.get("value"));
+                }
+                if ("search_select".equals(bm.get("kind")) && bm.get("id") != null) {
+                    out.put(slug + "." + key + ".id", str(bm.get("id")));
+                }
+            }
+            for (Object o : asList(obj.get("outputs"))) {
+                Map<String, Object> om = asMap(o);
+                if (om == null || !pluginKeyUsable(om.get("key"))) {
+                    continue;
+                }
+                if (om.get("value") != null) {
+                    out.put(slug + "." + om.get("key"), om.get("value"));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * A stored plugin answer's summary — its block values joined by {@code " / "} — or
+     * {@code null} when the plaintext is not a finished plugin answer (a JSON object with an
+     * {@code outputs} array).
+     */
+    public static String pluginAnswerSummary(String plaintext) {
+        Map<String, Object> obj = parsePluginPlaintext(plaintext);
+        return pluginFinished(obj) ? pluginSummaryOf(obj) : null;
+    }
+
+    /**
+     * The display form of a stored plugin answer — its blocks, then its outputs, in stored order —
+     * or {@code null} when the plaintext is not a JSON object with an {@code outputs} array.
+     * Reading it needs neither the plugin nor its description: labels and order are part of the
+     * answer.
+     */
+    public static PluginView pluginAnswerView(String plaintext) {
+        Map<String, Object> obj = parsePluginPlaintext(plaintext);
+        if (!pluginFinished(obj)) {
+            return null;
+        }
+        List<PluginView.Block> blocks = new ArrayList<>();
+        for (Object b : asList(obj.get("blocks"))) {
+            Map<String, Object> bm = asMap(b);
+            blocks.add(new PluginView.Block(
+                str(bm == null ? null : bm.get("label")), bm == null ? null : bm.get("value")));
+        }
+        List<PluginView.Output> outputs = new ArrayList<>();
+        for (Object o : asList(obj.get("outputs"))) {
+            Map<String, Object> om = asMap(o);
+            outputs.add(new PluginView.Output(
+                str(om == null ? null : om.get("label")),
+                str(om == null ? null : om.get("type")),
+                om == null ? null : om.get("value")));
+        }
+        return new PluginView(blocks, outputs);
     }
 
     // evalExpr(expr, map, refDate) -> value | null. Covers every AST node type.
@@ -401,6 +554,22 @@ public final class FlowCondition {
             }
             case "math": {
                 List<Object> args = asList(expr.get("args"));
+                String op = expr.get("op") instanceof String s ? s : "";
+                // max/min are variadic and skip the arguments that are not finite numbers, so they
+                // run before the any-null guard below; no numeric argument at all -> null.
+                if (op.equals("max") || op.equals("min")) {
+                    Double best = null;
+                    for (Object a : args) {
+                        Double n = toNum(evalExpr(a, map, refDate));
+                        if (n == null || !Double.isFinite(n)) {
+                            continue;
+                        }
+                        if (best == null || (op.equals("max") ? n > best : n < best)) {
+                            best = n;
+                        }
+                    }
+                    return best == null ? null : normalizeNum(best);
+                }
                 double[] nums = new double[args.size()];
                 for (int i = 0; i < args.size(); i++) {
                     Double n = toNum(evalExpr(args.get(i), map, refDate));
@@ -412,7 +581,6 @@ public final class FlowCondition {
                     }
                     nums[i] = n;
                 }
-                String op = expr.get("op") instanceof String s ? s : "";
                 Double r;
                 switch (op) {
                     case "add": {
@@ -449,7 +617,7 @@ public final class FlowCondition {
     }
 
     // Collect the constant KEYS an expression directly references (topological-ordering only).
-    private static void collectExprConstRefs(Object exprObj, Set<String> constKeys, Set<String> acc) {
+    static void collectExprConstRefs(Object exprObj, Set<String> constKeys, Set<String> acc) {
         Map<String, Object> expr = asMap(exprObj);
         if (expr == null) {
             return;
@@ -457,7 +625,8 @@ public final class FlowCondition {
         String type = expr.get("type") instanceof String s ? s : "";
         switch (type) {
             case "ref": {
-                if (expr.get("key") instanceof String k && constKeys.contains(k)) {
+                // A null constKeys collects every ref, not only the constant ones.
+                if (expr.get("key") instanceof String k && (constKeys == null || constKeys.contains(k))) {
                     acc.add(k);
                 }
                 return;
@@ -506,7 +675,7 @@ public final class FlowCondition {
             }
             return;
         }
-        if (cond.get("field") instanceof String f && constKeys.contains(f)) {
+        if (cond.get("field") instanceof String f && (constKeys == null || constKeys.contains(f))) {
             acc.add(f);
         }
     }
@@ -514,7 +683,7 @@ public final class FlowCondition {
     // Parse a value as a UTC-midnight calendar date. LocalDate is timezone-free, so day counts are
     // exact; LocalDate.of rejects impossible dates (e.g. 2026-02-30) via DateTimeException. Trim
     // BEFORE the strict anchored regex, matching JS String.trim() + /^\d{4}-\d{2}-\d{2}$/.
-    private static LocalDate parseFlowDate(Object v) {
+    static LocalDate parseFlowDate(Object v) {
         if (!(v instanceof String s)) {
             return null;
         }

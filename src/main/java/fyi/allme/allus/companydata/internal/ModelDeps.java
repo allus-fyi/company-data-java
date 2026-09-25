@@ -4,6 +4,7 @@ import fyi.allme.allus.companydata.BinaryFetchResult;
 import fyi.allme.allus.companydata.BinaryHandle;
 import fyi.allme.allus.companydata.DecryptException;
 import fyi.allme.allus.companydata.FieldTypeRegistry;
+import fyi.allme.allus.companydata.PluginValue;
 import fyi.allme.allus.companydata.Wrapper;
 
 import java.time.LocalDate;
@@ -38,10 +39,19 @@ public record ModelDeps(
      * row: a photo/document lane → a lazy {@link BinaryHandle} over the slot value_url (no eager
      * fetch/decrypt); a {@code composite} → a parsed Map; a {@code multilist} → a parsed List; a
      * {@code date} → a {@link LocalDate} (falling back to the raw string if unparseable);
-     * everything else → the decrypted plaintext String.
+     * everything else → the decrypted plaintext String. The reserved type key {@code plugin} is
+     * checked first and types the value as a {@link PluginValue}.
      */
     public Object typedValue(Map<String, Object> entry, String fieldType) {
         String ftype = fieldType == null ? "" : fieldType.toLowerCase();
+
+        // The type key "plugin" is reserved and never a registry row: a plugin answer is the
+        // self-describing JSON of its blocks and outputs, typed before the registry is asked.
+        if (PluginValue.TYPE_KEY.equals(ftype)) {
+            Object ciphertext = entry.get("value");
+            return ciphertext == null ? null : PluginValue.parse(decryptValue.apply(ciphertext));
+        }
+
         FieldTypeRegistry registry = fieldTypes.get();
         FieldTypeRegistry.Resolved definition = registry.resolve(ftype);
 

@@ -36,6 +36,10 @@ public final class CustomerClient {
 
     private final Config config;
     private final Http http;
+    // The plain transport plugin calls reach the forwarder over — never the API transport, which
+    // attaches the bearer token and rewrites the base URL.
+    private final fyi.allme.allus.companydata.internal.Transport pluginTransport =
+        PluginFlowParty.newTransport();
     private final RSAPrivateKey accountKey;
     private final ModelDeps deps;
     private final Map<String, RSAPublicKey> pubKeyCache = new LinkedHashMap<>();
@@ -204,8 +208,112 @@ public final class CustomerClient {
         return FlowRun.fromApi(asMap(http.get(CONN + "/" + connectionId + "/flow-runs/" + runId)));
     }
 
+    // ── plugins on this company's flow steps ────────────────────────────────────
+
+    /**
+     * A pass to the plugins of the plugin elements on the run's current step
+     * ({@code POST /api/company-connections/{id}/flow-runs/{runId}/plugin-pass}). The run must be
+     * awaiting this company's party.
+     */
+    public PluginPass pluginPass(String connectionId, String runId) {
+        return PluginPass.fromApi(
+            http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/plugin-pass", null));
+    }
+
+    private PluginFlowParty pluginParty(String connectionId, String runId) {
+        return new PluginFlowParty(pluginTransport, () -> flowRun(connectionId, runId),
+            () -> pluginPass(connectionId, runId), this::decryptOwnRunAnswers, CustomerClient::ownUserId);
+    }
+
+    /**
+     * {@link Client#pluginOptions} for this company's own party: the options of one search_select
+     * block, with the inputs read from the run's answers this company opens with its account key,
+     * overlaid with {@code draft} for the current step's slugs.
+     */
+    public PluginOptionsResult pluginOptions(String connectionId, String runId, String slug, String block,
+            String query, Map<String, String> picks, Map<String, Object> values, Map<String, Object> draft) {
+        return pluginParty(connectionId, runId).options(slug, block, query, picks, values, draft);
+    }
+
+    /**
+     * {@link Client#pluginOutputs} for this company's own party: {@link PluginOutputs} or
+     * {@link PluginPicksInvalid}.
+     */
+    public PluginOutputsResult pluginOutputs(String connectionId, String runId, String slug,
+            Map<String, String> picks, Map<String, Object> values, Map<String, Object> draft) {
+        return pluginParty(connectionId, runId).outputs(slug, picks, values, draft);
+    }
+
+    /**
+     * Apply {@code slug}'s min and max to {@code value} over the live answer map (this company's own
+     * copies of the run's answers, overlaid with {@code draft}, plugin answers expanded, constants
+     * computed). Call it before {@link #encryptFlowAnswer} seals the value.
+     *
+     * @throws ValidationException naming the broken bound
+     */
+    public void checkFlowValue(FlowRun run, String slug, Object value, Map<String, Object> draft) {
+        PluginFlowParty.checkBounds(run, slug, value,
+            PluginFlowParty.liveAnswers(run, decryptOwnRunAnswers(run), draft));
+    }
+
+    // The user bound to the party of the run's current step: plugin calls and the bound check act
+    // on this company's own turn.
+    private static String ownUserId(FlowRun run) {
+        return run.bindings().get(Client.partyOf(run.definition(), run.currentNode()));
+    }
+
+    // This company's own copies of the run's answers (for_user_id = the user bound to the current
+    // step), opened with the account key. Each bound party's copy holds the whole run.
+    private Map<String, Object> decryptOwnRunAnswers(FlowRun run) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String own = ownUserId(run);
+        if (own == null || own.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : run.answers()) {
+            Object forUser = row.get("for_user_id");
+            Object slug = row.get("slug");
+            Object value = row.get("value");
+            if (!own.equals(forUser) || slug == null || value == null) {
+                continue;
+            }
+            out.put(String.valueOf(slug), decryptAccount(value));
+        }
+        return out;
+    }
+
+    /**
+     * Submit this party's turn ({@code body} carries the encrypted per-party answers). It reads the
+     * run first and sets {@code source_private: true} on every answer in {@code body.answers} that is
+     * private: a field whose default reaches a private source.
+     */
+    @SuppressWarnings("unchecked")
     public Object submitFlowAnswers(String connectionId, String runId, Map<String, Object> body) {
-        return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/answers", body);
+        Map<String, Object> out = body;
+        if (body != null && body.get("answers") instanceof List<?> answers && !answers.isEmpty()) {
+            FlowRun run = flowRun(connectionId, runId);
+            java.util.Set<String> submitted = new java.util.LinkedHashSet<>();
+            for (Object a : answers) {
+                if (a instanceof Map<?, ?> am && am.get("slug") != null) {
+                    submitted.add(String.valueOf(am.get("slug")));
+                }
+            }
+            java.util.Set<String> sourcePrivate = PluginFlowParty.sourcePrivate(run, submitted, ownUserId(run));
+            List<Object> marked = new ArrayList<>();
+            for (Object a : answers) {
+                if (a instanceof Map<?, ?> am && am.get("slug") != null
+                        && sourcePrivate.contains(String.valueOf(am.get("slug")))) {
+                    Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>) am);
+                    copy.put("source_private", true);
+                    marked.add(copy);
+                } else {
+                    marked.add(a);
+                }
+            }
+            out = new LinkedHashMap<>(body);
+            out.put("answers", marked);
+        }
+        return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/answers", out);
     }
 
     public Object declineFlowRun(String connectionId, String runId) {

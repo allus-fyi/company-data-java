@@ -88,7 +88,8 @@ public final class Crypto {
     }
 
     /**
-     * Load an OpenSSL-encrypted PKCS#8 PEM into an in-memory RSA private key.
+     * Load an OpenSSL-encrypted PKCS#8 PEM into an in-memory RSA private key. An unencrypted
+     * PKCS#8 PEM loads too, whatever the passphrase.
      *
      * <p>The PEM is PBES2 (PBKDF2-HMAC-SHA256 + AES-256-CBC). BouncyCastle handles
      * the SHA-256 PRF cleanly. The key is never written back to disk in plaintext.
@@ -115,8 +116,8 @@ public final class Crypto {
                         .build(pw);
                 keyInfo = encrypted.decryptPrivateKeyInfo(decryptor);
             } else if (parsed instanceof PrivateKeyInfo info) {
-                // An unencrypted PKCS#8 PEM (defensive — the service PEM is always
-                // encrypted, but tolerate a plain one rather than crashing).
+                // An unencrypted PKCS#8 PEM ("BEGIN PRIVATE KEY") loads whatever the passphrase:
+                // a plugin server's own key (pluginOpenRequest) is commonly kept that way.
                 keyInfo = info;
             } else {
                 throw new DecryptException(
@@ -285,6 +286,80 @@ public final class Crypto {
         wrapper.put("iv", Base64.getEncoder().encodeToString(iv));
         wrapper.put("d", Base64.getEncoder().encodeToString(ciphertextWithTag));
         return wrapper;
+    }
+
+    // ── plugin keys and the plugin-server builder routine ──────────────────────
+
+    /**
+     * A key pair made for one plugin call: the private half stays in memory; {@code spki} is the
+     * public half as base64 SPKI — the {@code reply_key} a plugin seals its reply to.
+     */
+    public record ReplyKey(RSAPrivateKey privateKey, String spki) {
+    }
+
+    /** Make a fresh RSA-2048 key pair for one plugin call. */
+    public static ReplyKey generateReplyKey() {
+        try {
+            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
+            gen.initialize(2048, RNG);
+            java.security.KeyPair pair = gen.generateKeyPair();
+            return new ReplyKey((RSAPrivateKey) pair.getPrivate(),
+                exportPublicKeySpki((RSAPublicKey) pair.getPublic()));
+        } catch (java.security.GeneralSecurityException exc) {
+            throw new DecryptException("could not generate a reply key: " + exc.getMessage(), exc);
+        }
+    }
+
+    /** Encode an RSA public key as base64 SPKI (DER), the form {@link #loadPublicKey} reads. */
+    public static String exportPublicKeySpki(RSAPublicKey publicKey) {
+        return Base64.getEncoder().encodeToString(publicKey.getEncoded());
+    }
+
+    /**
+     * For a plugin's OWN server, never a call on the allme API: open the body of a
+     * {@code POST {base_url}/call} — {@code {"request": "<wrapper>"}} — with the plugin's private key
+     * and return the request object ({@code field_type}, {@code op}, {@code block}, {@code query},
+     * {@code picks}, {@code values}, {@code inputs}, {@code reply_key}).
+     *
+     * @param body          the raw request body
+     * @param privateKeyPem a PKCS#8 PEM, encrypted or unencrypted
+     * @param passphrase    the PEM's passphrase, or {@code null} for an unencrypted PEM
+     * @throws DecryptException when the body, the key or the sealed request cannot be read
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> pluginOpenRequest(String body, byte[] privateKeyPem, String passphrase) {
+        Object envelope;
+        try {
+            envelope = body == null ? null : fyi.allme.allus.companydata.internal.Json.parse(body);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exc) {
+            throw new DecryptException("plugin call body is not valid JSON", exc);
+        }
+        if (!(envelope instanceof Map<?, ?> m) || m.get("request") == null) {
+            throw new DecryptException("plugin call body carries no \"request\"");
+        }
+        String plaintext = decrypt(Wrapper.of(m.get("request")), loadPrivateKey(privateKeyPem, passphrase));
+        try {
+            Object request = fyi.allme.allus.companydata.internal.Json.parse(plaintext);
+            if (request instanceof Map<?, ?> rm) {
+                return (Map<String, Object>) rm;
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exc) {
+            throw new DecryptException("plugin request plaintext is not valid JSON", exc);
+        }
+        throw new DecryptException("plugin request plaintext is not a JSON object");
+    }
+
+    /**
+     * For a plugin's OWN server: seal a reply object ({@code {"options":[…],"more":…}},
+     * {@code {"outputs":{…}}} or {@code {"picks_invalid":true}}) to the request's {@code reply_key}
+     * and return the response body {@code {"reply": "<wrapper>"}}.
+     */
+    public static Map<String, Object> pluginSealReply(Object reply, String replyKeySpki) {
+        Map<String, Object> sealed = encryptForPublicKey(
+            fyi.allme.allus.companydata.internal.Json.write(reply), loadPublicKey(replyKeySpki));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reply", fyi.allme.allus.companydata.internal.Json.write(sealed));
+        return out;
     }
 
     /**

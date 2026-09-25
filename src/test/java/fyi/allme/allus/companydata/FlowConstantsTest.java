@@ -46,7 +46,7 @@ class FlowConstantsTest {
     @SuppressWarnings("unchecked")
     Stream<DynamicTest> vectorCases() throws Exception {
         List<Map<String, Object>> cases = cases();
-        assertEquals(51, cases.size(), "expected 51 vector cases");
+        assertEquals(62, cases.size(), "expected 62 vector cases");
         return cases.stream().map(c -> DynamicTest.dynamicTest(
             (String) c.get("name"),
             () -> {
@@ -56,6 +56,10 @@ class FlowConstantsTest {
                     ? (Map<String, Object>) m : Map.of();
                 String refDate = c.get("reference_date") instanceof String s ? s : null;
                 Map<String, Object> expect = (Map<String, Object>) c.get("expect");
+                // A case carrying plugin_slugs feeds its answers through expandPluginAnswers first.
+                if (c.get("plugin_slugs") instanceof List<?> slugs) {
+                    answers = FlowCondition.expandPluginAnswers(answers, (List<String>) slugs);
+                }
 
                 Map<String, Object> got = FlowCondition.computeConstants(constants, answers, refDate);
 
@@ -67,7 +71,8 @@ class FlowConstantsTest {
                             + " but was " + got.get(key));
                 }
                 // answers must survive untouched in the output map.
-                for (Map.Entry<String, Object> e : answers.entrySet()) {
+                final Map<String, Object> fed = answers;
+                for (Map.Entry<String, Object> e : fed.entrySet()) {
                     assertTrue(deepEq(e.getValue(), got.get(e.getKey())),
                         c.get("name") + ": answer " + e.getKey() + " was mutated");
                 }

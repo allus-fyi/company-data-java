@@ -203,7 +203,7 @@ Your request-field **definitions** — fetched once from
 `GET /api/company-data/request-fields` and cached for the life of the client (it
 types every value). Returns *your* request config, never the person's fields.
 
-* **Returns:** `List<RequestField>` — each `RequestField(slug, label, type, oneTime, mandatory, raw)`. `mandatory` is true when the field is mandatory-to-provide **or** mandatory-to-stay-connected.
+* **Returns:** `List<RequestField>` — each `RequestField(slug, label, type, oneTime, mandatory, …, plugin, raw)`. `mandatory` is true when the field is mandatory-to-provide **or** mandatory-to-stay-connected. `plugin` is a `RequestField.Plugin(pluginName, fieldType, snapshot)` on a plugin row and `null` elsewhere (see [Plugins](#plugins)).
 * **Throws:** `AuthException`, `ApiException`, `RateLimitException`.
 
 ```java
@@ -455,6 +455,7 @@ PRIMITIVE, so a type added as a row types itself with no SDK release.
 
 | The type's resolved… | Java `value()` |
 |----------------------|----------------|
+| the reserved type key `plugin` (checked before the registry) | a `PluginValue` — see [Plugins](#plugins) |
 | storage lane `photo` / `document` | a lazy `BinaryHandle` — see below |
 | primitive `composite` | `Map<String,Object>` — the decrypted plaintext is a JSON object, parsed for you |
 | primitive `date` | `java.time.LocalDate` (falls back to the raw `String` if it can't be parsed) |
@@ -837,6 +838,115 @@ Refusals surface as `ApiException` carrying the platform `error_key`:
 
 ---
 
+## Plugins
+
+A company can put a **plugin field** on a flow step, a request row or a sign-in claim. A plugin
+serves the options of the field's blocks (`search_select`, `text`, `number`, `date`) and computes
+its outputs. Its answer is stored like any other answer and reads back without the plugin: it is
+self-describing JSON.
+
+```json
+{"plugin":"Flex","type":"cao",
+ "blocks":[{"key":"cao","kind":"search_select","label":"CAO","id":"hrc","value":"Horeca Fictief"}],
+ "outputs":[{"key":"min_wage","type":"number","label":"Minimum wage","value":9.5}]}
+```
+
+### Reading plugin answers
+
+- **Values.** A value whose row type is the reserved key `plugin` is a `PluginValue(plugin, type,
+  blocks, outputs, raw)` — `blocks` a `List<PluginValue.Block(key, kind, label, id, value)>`,
+  `outputs` a `List<PluginValue.Output(key, type, label, value)>` — typed before the field-type
+  registry is consulted. A plaintext that is not a JSON object with an `outputs` array (an unfinished answer has none) raises the SDK's validation error with field type `plugin`, both here and from `parsePluginValue`.
+- **The catalog.** `RequestField.plugin()` is `RequestField.Plugin(pluginName, fieldType, snapshot)`
+  on a plugin row (request or flow) and `null` elsewhere; `snapshot` holds the field type's blocks,
+  inputs and outputs.
+- **Sign-in.** A plugin claim's value in `SignInResult`'s values is the same JSON string;
+  `OAuthClient.parsePluginValue(value)` turns it into a `PluginValue`.
+- **Display.** `FlowCondition.pluginAnswerView(plaintext)` → `PluginView(blocks: [Block(label,
+  value)], outputs: [Output(label, type, value)])` in stored order (`null` when it is not a finished
+  answer), and `FlowCondition.pluginAnswerSummary(plaintext)` → the block values joined by `" / "`.
+
+### Flow expressions over plugin answers
+
+On a flow, a plugin element `cao` is readable in conditions and constants as `cao` (the summary),
+`cao.<block>`, `cao.<block>.id` (a `search_select` pick's id) and `cao.<output>`.
+`FlowCondition.expandPluginAnswers(answers, pluginSlugs)` returns a new map with those keys; an
+unfinished answer is removed and a value that is not a JSON object is left as it is.
+`FlowCondition.resolvedConstants(constants, answers, referenceDate, pluginSlugs)` expands first when
+you pass the definition's plugin element slugs. The `math` ops include `max` and `min` (variadic;
+arguments that are not finite numbers are skipped; none left → `null`). `submitFlowAnswers` and
+`processFlowRun` route over the expanded, constants-computed map.
+
+### A plugin field on the company's own step
+
+Methods on `Client` (the service's own party) and on `CustomerClient` (this company's party on
+another company's flow — the same methods with a leading `connectionId`):
+
+| Method | Returns | What it does |
+|--------|---------|--------------|
+| `pluginPass(runId)` | `PluginPass` | A pass for the plugins of the plugin elements on the run's current step: `POST /api/company-data/flow-runs/{runId}/plugin-pass` (`CustomerClient`: `POST /api/company-connections/{id}/flow-runs/{runId}/plugin-pass`). The run must be awaiting your party. |
+| `pluginOptions(runId, slug, block, query, picks, values, draft)` | `PluginOptionsResult` | The options of one `search_select` block (`options()` a list of `Option(id, label)`, `more()` = the list was cut at 50; `query` `""` lists everything). `picks` = ids picked so far by block key, `values` = typed block values. |
+| `pluginOutputs(runId, slug, picks, values, draft)` | `PluginOutputsResult` | `PluginOutputs(outputs)` or `PluginPicksInvalid` (the picks no longer fit: pick again) — a sealed interface. After an input changes, call it again before you submit. |
+| `checkFlowValue(run, slug, value, draft)` | `void` | Throws a `ValidationException` naming the bound when `value` is below the field's `min` or above its `max`. `submitFlowAnswers` applies the same check to every value it submits. `CustomerClient`: call it before `encryptFlowAnswer`. |
+
+- **One live answer map.** `draft` is the current step's answers you have not submitted yet (slug
+  → plaintext; `null` for none). The SDK reads the run's stored answers it can open (the service
+  key's copies; the account key's copies on `CustomerClient`), overlays `draft` for the current
+  step's slugs, expands plugin answers and computes the constants. Inputs and bounds are read from
+  that map. An input is converted to its declared type: `number` a JSON number, `date` a
+  `YYYY-MM-DD` string, `boolean` a JSON boolean, `text` a string.
+- **Another party's private value is never sent.** A source is private when its slug is in
+  `FlowRun.privateSlugs()`, when it is a constant reaching one, or when it is a draft whose field
+  has a default reaching one (whatever the draft's value). A run read without `privateSlugs`
+  (`null`) treats every other party's value as private. A required input that cannot be sent throws
+  `PluginInputUnavailableException` — `getSource()` is the key the input is wired to, and
+  `getReason()` is, checked in this order, `UNWIRED` (`"unwired"`), `UNANSWERED` (`"unanswered"`),
+  `OTHER_PARTY_PRIVATE` (`"other_party_private"`) or `NOT_CONVERTIBLE` (`"not_convertible"`); an optional one is left out.
+- **`source_private` on submit.** `submitFlowAnswers` (and `CustomerClient.submitFlowAnswers`, which
+  reads the run first) sets `source_private: true` on every submitted answer that is private by the
+  same rule: a field whose default reaches a private source. Every party of the run then sees that
+  slug in `privateSlugs()`. A plugin answer's outputs are never private, whatever inputs produced
+  them, so a plugin answer is never marked.
+- **The call.** The request is sealed to the plugin's public key and posted to the pass's
+  `forwarderUrl()` + `/call` over a plain `java.net.http.HttpClient` that carries no allme
+  credential, follows no redirect and never rewrites the URL. The reply is sealed to an RSA-2048 key
+  pair made for the call and opened in memory. A `409 plugin.key_changed` reseals once with the key
+  it names; a 401/403 takes a new pass once. Any other refusal is an `ApiException` carrying the
+  forwarder's `errorKey()` (for example `plugin.not_responding`, `plugin.busy`,
+  `plugin.rate_limited`).
+
+```java
+Map<String, Object> draft = Map.of("age", "19");
+PluginOptionsResult res = client.pluginOptions(run.id(), "cao", "cao", "hor", null, null, draft);
+PluginOutputsResult out = client.pluginOutputs(run.id(), "cao",
+    Map.of("cao", "hrc", "scale", "c", "step", "4"), null, draft);
+switch (out) {
+    case PluginOutputs o -> System.out.println(o.outputs().get("min_wage"));
+    case PluginPicksInvalid p -> { /* pick again */ }
+}
+client.checkFlowValue(run, "wage", "9.00", draft); // throws ValidationException below the minimum
+```
+
+### Building a plugin server
+
+A plugin's own server uses two standalone functions — never a call on the allme API, so they take
+the plugin's own key:
+
+```java
+Map<String, Object> req = Crypto.pluginOpenRequest(body, pluginKeyPem, null); // null for an unencrypted PKCS#8 PEM
+// req.get("field_type"), req.get("op") ("options" | "outputs"), "block", "query",
+// "picks", "values", "inputs", "reply_key"
+Map<String, Object> resp = Crypto.pluginSealReply(Map.of("options", opts, "more", false),
+    (String) req.get("reply_key"));
+// write resp ({"reply": "<wrapper>"}) as the JSON answer
+```
+
+`Crypto.loadPrivateKey` accepts an unencrypted PKCS#8 PEM as well as an encrypted one.
+`Crypto.generateReplyKey()` (an RSA-2048 key pair and its base64 SPKI) and
+`Crypto.exportPublicKeySpki(publicKey)` are the key helpers the flow methods use.
+
+---
+
 ## The changes pump
 
 The changes feed is a server-side **drain-on-fetch queue**:
@@ -1089,6 +1199,8 @@ all six SDKs. They are unchecked (`RuntimeException`).
 | `DecryptException` | A ciphertext wrapper is malformed, the key is wrong, or the GCM tag mismatches. Surfaces when a value is accessed/decrypted. |
 | `WebhookException` | Signature verification failed, or an envelope couldn't be unwrapped/parsed. |
 | `RateLimitException` | A 429 from a rate-limited endpoint. Subclass of `ApiException` (status fixed at 429); carries `retryAfter()` (seconds, or `null`). |
+| `ValidationException` | A value fails its field type's check; or (`getBound()` = `"min"`/`"max"`, `getBoundValue()`) a flow value lies outside its field's bound. |
+| `PluginInputUnavailableException` | A required plugin input cannot be sent; carries `getInput()`, `getSource()` and `getReason()` — see [Plugins](#plugins). |
 
 ```java
 import fyi.allme.allus.companydata.*;

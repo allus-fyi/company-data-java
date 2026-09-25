@@ -32,8 +32,33 @@ public record RequestField(
      * policy from each {@link Value#verifiedAt()}.
      */
     Integer verifiedMaxAgeDays,
+    /**
+     * A plugin row's (type {@code plugin}) plugin: its name, its field type and the snapshot of
+     * that field type's blocks, inputs and outputs. Null on every other row, and on an older API.
+     */
+    Plugin plugin,
     Map<String, Object> raw
 ) {
+    /**
+     * The plugin member of a plugin request row or flow row.
+     *
+     * @param pluginName the plugin's name
+     * @param fieldType  the plugin field type
+     * @param snapshot   the field type's description as the company saved it: plugin_name, host,
+     *                   label, blocks, inputs, outputs
+     */
+    public record Plugin(String pluginName, String fieldType, Map<String, Object> snapshot) {
+        @SuppressWarnings("unchecked")
+        static Plugin fromApi(Object value) {
+            if (!(value instanceof Map<?, ?> m)) {
+                return null;
+            }
+            Map<String, Object> snapshot = m.get("snapshot") instanceof Map<?, ?> sm
+                ? (Map<String, Object>) sm : null;
+            return new Plugin(Parse.str(m.get("plugin_name")), Parse.str(m.get("field_type")), snapshot);
+        }
+    }
+
     static RequestField fromApi(Map<String, Object> obj) {
         return new RequestField(
             Parse.str(obj.get("slug")),
@@ -44,6 +69,7 @@ public record RequestField(
             Parse.str(obj.get("audience")),
             Parse.bool(obj.get("verified")),
             Parse.intOrNull(obj.get("verified_max_age_days")),
+            Plugin.fromApi(obj.get("plugin")),
             obj);
     }
 

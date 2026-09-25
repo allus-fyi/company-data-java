@@ -46,6 +46,12 @@ public record FlowRun(
      * other counterparties are reachable only here.
      */
     List<FlowRunParticipant> participants,
+    /**
+     * The slugs whose answer came from a private source. Every party of the run sees it; it is
+     * metadata, never a value. {@code null} when the run read did not carry the list, which the
+     * plugin helpers read as "unknown": every other party's value is then treated as private.
+     */
+    List<String> privateSlugs,
     Map<String, Object> raw
 ) {
 
@@ -112,6 +118,16 @@ public record FlowRun(
             }
         }
 
+        List<String> privateSlugs = null;
+        if (obj.get("private_slugs") instanceof List<?> sl) {
+            privateSlugs = new ArrayList<>();
+            for (Object s : sl) {
+                if (s != null && !String.valueOf(s).isEmpty()) {
+                    privateSlugs.add(String.valueOf(s));
+                }
+            }
+        }
+
         return new FlowRun(
             Parse.str(obj.get("id")),
             Parse.str(obj.get("flow_id")),
@@ -130,6 +146,7 @@ public record FlowRun(
             Parse.isoDateTime(obj.get("created_at")),
             Parse.isoDateTime(obj.get("updated_at")),
             participants,
+            privateSlugs,
             obj);
     }
 }

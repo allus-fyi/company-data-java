@@ -302,6 +302,17 @@ public final class OAuthClient {
         return parse(res, "userinfo");
     }
 
+    /**
+     * Parse a plugin claim's value — the JSON string a {@link SignInResult} carries in its values
+     * under the claim's name — into a {@link PluginValue}.
+     *
+     * @throws ValidationException (field type {@code plugin}) when the value is not a JSON object
+     *                             with an {@code outputs} array
+     */
+    public static PluginValue parsePluginValue(String value) {
+        return PluginValue.parse(value);
+    }
+
     /** Exchange + userinfo in one call, decrypting one_time values via the configured app key. */
     public SignInResult completeSignIn(String code, String codeVerifier) {
         Map<String, Object> token = exchangeCode(code, codeVerifier);
