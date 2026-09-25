@@ -295,6 +295,23 @@ Map<String, Object> answers = client.flowRunAnswers(run);
 System.out.println(answers.get("plan_tier"));
 ```
 
+### `CustomerClient.generateFlowDocument(connectionId, run)`
+
+```java
+Object generateFlowDocument(String connectionId, FlowRun run)
+```
+
+The party that answers a run's last step generates the contract — the customer role included. When
+your company is a CUSTOMER of another company's service and its answer completes a document-mode leaf,
+the run parks at `generating` until you generate: `POST
+/api/company-connections/{connectionId}/flow-runs/{runId}/generate`. Pass the run as re-read after
+your leaf submit. The answer map comes from your OWN copy of the run's answers, opened with the account
+key — every party's answers are sealed to every bound party, so that copy holds the whole run and no
+service key is involved.
+
+* **Returns:** the raw API response `{document_id, documents, status}`; a repeat answers the same document set.
+* **Throws:** `ConfigException` when the run's current step is not bound to your company; `AuthException`, `ApiException`, `DecryptException`, `RateLimitException`.
+
 ### `logs(limit, offset)`
 
 ```java

@@ -288,6 +288,36 @@ public final class Crypto {
         return wrapper;
     }
 
+    /**
+     * The one-time-key bundle a flow run's {@code /generate} takes: the WHOLE answer map, sealed under
+     * a key used once and never stored. {@code answers} is {@code {slug: plaintext}} (a non-string
+     * value is JSON-encoded). A random 32-byte AES-256-GCM key encrypts {@code JSON(answers)}; the
+     * result is packed {@code iv(12)||ciphertext||tag(16)} and both halves are base64-encoded →
+     * {@code {otk, values}}. The server evaluates every leaf-PDF condition, constant and
+     * {@code {{tag}}} over this map, so a slug missing from it prints blank on the contract.
+     */
+    static Map<String, Object> oneTimeKeyBundle(Map<String, Object> answers) {
+        Map<String, Object> strMap = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : answers.entrySet()) {
+            strMap.put(e.getKey(), e.getValue() instanceof String s ? s
+                : fyi.allme.allus.companydata.internal.Json.write(e.getValue()));
+        }
+        byte[] payload = fyi.allme.allus.companydata.internal.Json.write(strMap)
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] otk = new byte[32];
+        RNG.nextBytes(otk);
+        byte[] iv = new byte[GCM_IV_LEN];
+        RNG.nextBytes(iv);
+        byte[] ctWithTag = aesGcmEncrypt(otk, iv, payload); // ciphertext || tag(16)
+        byte[] blob = new byte[GCM_IV_LEN + ctWithTag.length]; // iv(12) || ciphertext || tag(16)
+        System.arraycopy(iv, 0, blob, 0, GCM_IV_LEN);
+        System.arraycopy(ctWithTag, 0, blob, GCM_IV_LEN, ctWithTag.length);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("otk", Base64.getEncoder().encodeToString(otk));
+        body.put("values", Base64.getEncoder().encodeToString(blob));
+        return body;
+    }
+
     // ── plugin keys and the plugin-server builder routine ──────────────────────
 
     /**

@@ -1384,40 +1384,13 @@ public final class Client {
     }
 
     /**
-     * Document-mode company leaf: one-time-key value gather → POST /generate. Builds a random
-     * 32-byte AES-256-GCM key, encrypts {@code JSON({slug: plaintext})} of the company's decrypted
-     * answers, packs {@code iv(12)||ciphertext||tag(16)}, and POSTs {@code {otk, values}} (both
-     * base64). Returns the raw API response {@code {document_id, status}} (idempotent).
+     * Document-mode company leaf: one-time-key value gather → POST /generate. Seals the company's
+     * decrypted answers with the one-time-key bundle and POSTs {@code {otk, values}}. Returns the
+     * raw API response {@code {document_id, documents, status}} (idempotent — a repeat answers the
+     * same document set).
      */
     public Object generateFlowDocument(FlowRun run) {
-        Map<String, Object> answers = decryptRunAnswers(run);
-        Map<String, Object> strMap = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> e : answers.entrySet()) {
-            strMap.put(e.getKey(), e.getValue() instanceof String s ? s : Json.write(e.getValue()));
-        }
-        byte[] payload = Json.write(strMap).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        byte[] otk = new byte[32];
-        byte[] iv = new byte[12];
-        java.security.SecureRandom rng = new java.security.SecureRandom();
-        rng.nextBytes(otk);
-        rng.nextBytes(iv);
-        byte[] ctWithTag;
-        try {
-            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,
-                new javax.crypto.spec.SecretKeySpec(otk, "AES"),
-                new javax.crypto.spec.GCMParameterSpec(128, iv));
-            ctWithTag = cipher.doFinal(payload); // ciphertext || tag(16)
-        } catch (java.security.GeneralSecurityException exc) {
-            throw new DecryptException("could not AES-GCM encrypt flow generate payload", exc);
-        }
-        byte[] blob = new byte[12 + ctWithTag.length]; // iv(12) || ciphertext || tag(16)
-        System.arraycopy(iv, 0, blob, 0, 12);
-        System.arraycopy(ctWithTag, 0, blob, 12, ctWithTag.length);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("otk", java.util.Base64.getEncoder().encodeToString(otk));
-        body.put("values", java.util.Base64.getEncoder().encodeToString(blob));
-        return http.post(FLOW_RUNS + "/" + run.id() + "/generate", body);
+        return http.post(FLOW_RUNS + "/" + run.id() + "/generate", Crypto.oneTimeKeyBundle(decryptRunAnswers(run)));
     }
 
     /** The company's per-node logic: returns the {@code {slug: value}} fill for the current node. */

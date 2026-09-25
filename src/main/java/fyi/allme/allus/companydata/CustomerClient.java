@@ -18,8 +18,9 @@ import java.util.function.Consumer;
  *
  * <p>{@code CustomerClient} is what a connecting company uses to consume and answer another
  * company's service over its {@code acct_*} credentials: list company↔company connections,
- * provide/edit typed consent answers, read (and decrypt) issued documents, run contract flows,
- * drain the account change feed, and verify account-level webhooks. It reuses the same crash-safe
+ * provide/edit typed consent answers, read (and decrypt) issued documents, run contract flows —
+ * generating the contract of a run whose last step it answered — drain the account change feed,
+ * and verify account-level webhooks. It reuses the same crash-safe
  * {@link Pump}, webhook helpers, and hybrid-crypto core as the service {@link Client}.
  *
  * <p><b>NO sign/accept methods (spec D6):</b> signing/accepting a contract is a deliberate human
@@ -318,6 +319,34 @@ public final class CustomerClient {
 
     public Object declineFlowRun(String connectionId, String runId) {
         return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/decline", null);
+    }
+
+    /**
+     * Generate the contract of a document-mode run whose LEAF this company answered ({@code POST
+     * /api/company-connections/{id}/flow-runs/{runId}/generate}). The party that answers a run's last
+     * step generates. Submitting the leaf's answers leaves the run {@code generating}; pass the run as
+     * re-read then. The whole answer map comes from this company's OWN copy of the answers, opened
+     * with the account key — every party's answers are sealed to every bound party, so that copy holds
+     * the whole run and no service key is involved — and is sealed with the one-time-key bundle.
+     * Returns the raw API response {@code {document_id, documents, status}} (idempotent — a repeat
+     * answers the same document set).
+     *
+     * @throws ConfigException when the run's current step is not bound to this company — the
+     *     participant the run lists on {@code connectionId}
+     */
+    public Object generateFlowDocument(String connectionId, FlowRun run) {
+        String own = null;
+        for (FlowRunParticipant p : run.participants()) {
+            if (connectionId.equals(p.connectionId())) {
+                own = p.personUserId();
+                break;
+            }
+        }
+        if (own == null || own.isEmpty() || !own.equals(ownUserId(run))) {
+            throw new ConfigException("run " + run.id() + " is not at a step this company answered");
+        }
+        return http.post(CONN + "/" + connectionId + "/flow-runs/" + run.id() + "/generate",
+            Crypto.oneTimeKeyBundle(decryptOwnRunAnswers(run)));
     }
 
     /** Encrypt one answer value for one flow party per the P4 key rule. */
