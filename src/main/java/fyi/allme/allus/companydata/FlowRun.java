@@ -41,9 +41,9 @@ public record FlowRun(
     OffsetDateTime createdAt,
     OffsetDateTime updatedAt,
     /**
-     * Every party the run binds, the owning company included (flows.html §5a/§9 item 12).
-     * {@code connectionId} above names only the PRIMARY counterparty, so a multi-actor run's
-     * other counterparties are reachable only here.
+     * Every bound party, including the owning company.
+     * The top-level connection id is the customer caller's own connection on customer reads;
+     * service-owner reads carry the primary counterparty's connection.
      */
     List<FlowRunParticipant> participants,
     /**
