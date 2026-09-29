@@ -163,7 +163,12 @@ class FlowRunTest {
     @Test
     void triggerFlowRun(@TempDir Path tmp) throws Exception {
         Object[] captured = new Object[2];
-        ClientTest.RoutingTransport t = new ClientTest.RoutingTransport(noGet(),
+        BiFunction<String, Map<String, String>, Response> published = (url, params) -> {
+            assertTrue(url.endsWith("/company-data/flows/flow-1/published"));
+            return FakeTransport.json(200,
+                "{\"version\":3,\"definition\":{\"parties\":[],\"nodes\":[]},\"request_field_types\":{}}");
+        };
+        ClientTest.RoutingTransport t = new ClientTest.RoutingTransport(published,
             (method, url, jsonBody, data) -> {
                 captured[0] = url;
                 captured[1] = jsonBody;
@@ -178,6 +183,8 @@ class FlowRunTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> target = (Map<String, Object>) body.get("target");
         assertEquals("csc-1", target.get("connection_id"));
+        assertEquals(3, ((Number) body.get("flow_version")).intValue());
+        assertTrue(!body.containsKey("tag_values"));
         assertEquals("company", run.companyPartyKey());
         assertEquals(COMPANY_UID, run.serviceUserId());
     }

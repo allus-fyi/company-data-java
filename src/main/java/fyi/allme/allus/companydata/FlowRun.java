@@ -57,7 +57,19 @@ public record FlowRun(
      * Empty when the run holds none.
      */
     Map<String, String> sourceFiles,
-    Map<String, Object> raw
+    Map<String, Object> raw,
+    /**
+     * The owning company's profile values the run's owner-party text tags name, fixed at start:
+     * {@code "party.field"} → {@code {"v": value, "t": field_type}}. {@code null} on a run whose
+     * text names none.
+     */
+    Map<String, Object> ownerTagValues,
+    /**
+     * The company's sealed values for the run's non-owner party text tags, fixed at start:
+     * {@code {"public": wrapper, "public_tags": [tag], "private": {tag: wrapper}}}, sealed to the
+     * service key. {@code null} on a run whose text names none.
+     */
+    Map<String, Object> tagValues
 ) {
 
     /** The party key the company is bound to ({@code bindings[key] == companyUserId}). */
@@ -161,6 +173,9 @@ public record FlowRun(
             participants,
             privateSlugs,
             sourceFiles,
-            obj);
+            obj,
+            obj.get("owner_tag_values") instanceof Map<?, ?> otv ? (Map<String, Object>) otv : null,
+            obj.get("tag_values") instanceof Map<?, ?> tv && tv.get("public") instanceof String
+                ? (Map<String, Object>) tv : null);
     }
 }

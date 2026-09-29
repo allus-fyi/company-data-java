@@ -23,7 +23,12 @@ public record Connection(
     String customerType,
     /** The customer's profile share code (previously only via {@code raw}); null when absent. */
     String shareCode,
-    Map<String, Object> raw
+    Map<String, Object> raw,
+    /**
+     * Per answered slug, whether its value is private — the source field's privacy, false for an
+     * answer with no source field. A slug absent here is private. Metadata only.
+     */
+    Map<String, Boolean> valuesPrivate
 ) {
     /**
      * Build a Connection from a hardened connectionDetail (or list) object.
@@ -62,7 +67,15 @@ public record Connection(
             Parse.str(obj.get("customer_type")), Parse.str(id.get("customer_type")));
         String shareCode = firstNonNull(
             Parse.str(obj.get("share_code")), Parse.str(id.get("share_code")));
-        return new Connection(connId, personId, displayName, connectedAt, values, customerType, shareCode, obj);
+        Map<String, Boolean> valuesPrivate = new LinkedHashMap<>();
+        if (obj.get("values_private") instanceof Map<?, ?> pm) {
+            for (Map.Entry<?, ?> e : pm.entrySet()) {
+                if (e.getValue() instanceof Boolean b) {
+                    valuesPrivate.put(String.valueOf(e.getKey()), b);
+                }
+            }
+        }
+        return new Connection(connId, personId, displayName, connectedAt, values, customerType, shareCode, obj, valuesPrivate);
     }
 
     private static String firstNonNull(String... candidates) {

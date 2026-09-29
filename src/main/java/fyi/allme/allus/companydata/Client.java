@@ -2,6 +2,7 @@ package fyi.allme.allus.companydata;
 
 import fyi.allme.allus.companydata.internal.Http;
 import fyi.allme.allus.companydata.internal.Json;
+import fyi.allme.allus.companydata.internal.Parse;
 import fyi.allme.allus.companydata.internal.ModelDeps;
 import fyi.allme.allus.companydata.internal.Transport;
 
@@ -1097,11 +1098,28 @@ public final class Client {
     // ── contract-flow runs (company side — the company is a bound party) ─────────
 
     /**
+     * The latest PUBLISHED version of a flow → {@link PublishedFlow} (version, definition and the
+     * service's request-field types). {@code GET /api/company-data/flows/{flowId}/published}.
+     */
+    public PublishedFlow publishedFlow(String flowId) {
+        return PublishedFlow.fromApi(http.get(FLOWS + "/" + flowId + "/published"));
+    }
+
+    /**
      * Start a run for a connection. {@code bindings} = {@code {party_key: user_id}} covering the
-     * flow's parties (each bound user must be the company or the connected person). Pins the flow's
-     * latest PUBLISHED version. {@code connectionId} is the person-side
-     * {@code company_service_connections.id} for this service. Returns the created
-     * {@link FlowRun} (status {@code awaiting_<entry node's party>}).
+     * flow's parties (each bound user must be the company or the connected person).
+     * {@code connectionId} is the person-side {@code company_service_connections.id} for this
+     * service. Returns the created {@link FlowRun} (status {@code awaiting_<entry node's party>}).
+     *
+     * <p>Reads the flow's latest published version ({@link #publishedFlow}) and pins it with
+     * {@code flow_version}. When that version's text elements show the connected customer's shared
+     * values ({@code {{party.field}}} tags), the SDK opens those values with the service key and
+     * seals them per recipient — one wrapper of the non-private values and one per private value, to
+     * the company (the service key) and to the customer — and sends them as {@code tag_values}. A
+     * newer publish in between ({@code flows.version_changed}) is re-read and retried once; a
+     * customer key that changed ({@code flows.tag_values_stale}) is re-read and retried once. A stale
+     * SERVICE key throws {@link ConfigException}: rebuild the client with the service's current
+     * private key.
      */
     public FlowRun triggerFlowRun(String flowId, String connectionId, Map<String, String> bindings) {
         return triggerFlowRun(flowId, connectionId, bindings, List.of());
@@ -1118,22 +1136,131 @@ public final class Client {
      */
     public FlowRun triggerFlowRun(
             String flowId, String connectionId, Map<String, String> bindings, List<Map<String, String>> sourceFiles) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("target", Map.of("connection_id", connectionId));
-        body.put("bindings", bindings);
-        if (sourceFiles != null && !sourceFiles.isEmpty()) {
-            List<Map<String, Object>> files = new ArrayList<>();
-            for (Map<String, String> sf : sourceFiles) {
-                Map<String, Object> entry = new LinkedHashMap<>();
-                entry.put("source_key", sf.get("source_key"));
-                entry.put("for_user_id", sf.get("for_user_id"));
-                entry.put("file", sf.get("file"));
-                files.add(entry);
+        PublishedFlow published = publishedFlow(flowId);
+        boolean versionRetried = false;
+        boolean staleRetried = false;
+        while (true) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("target", Map.of("connection_id", connectionId));
+            body.put("bindings", bindings);
+            body.put("flow_version", published.version());
+            if (sourceFiles != null && !sourceFiles.isEmpty()) {
+                List<Map<String, Object>> files = new ArrayList<>();
+                for (Map<String, String> sf : sourceFiles) {
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("source_key", sf.get("source_key"));
+                    entry.put("for_user_id", sf.get("for_user_id"));
+                    entry.put("file", sf.get("file"));
+                    files.add(entry);
+                }
+                body.put("source_files", files);
             }
-            body.put("source_files", files);
+            String shareCode = null;
+            List<FlowText.PartyTag> tags = FlowText.nonOwnerPartyTags(published.definition());
+            if (!tags.isEmpty()) {
+                Map<String, Object> detail = asStringMap(http.get(CONNECTIONS + "/" + connectionId));
+                shareCode = Parse.str(detail.get("share_code"));
+                body.put("tag_values", compileTagValues(tags, published, connectionId, detail));
+            }
+            try {
+                return FlowRun.fromApi(http.post(FLOWS + "/" + flowId + "/runs", body));
+            } catch (ApiException e) {
+                if ("flows.version_changed".equals(e.errorKey()) && !versionRetried) {
+                    versionRetried = true;
+                    published = publishedFlow(flowId);
+                    continue;
+                }
+                if ("flows.tag_values_stale".equals(e.errorKey())) {
+                    Object stale = e.details().get("stale");
+                    if (stale instanceof List<?> sl && sl.contains("company")) {
+                        throw new ConfigException(
+                            "the configured service private key is not this service's current key — "
+                                + "rebuild the client with the current service private key");
+                    }
+                    if (!staleRetried && shareCode != null) {
+                        staleRetried = true;
+                        invalidatePublicKey(shareCode);
+                        continue;
+                    }
+                }
+                throw e;
+            }
         }
-        Object created = http.post(FLOWS + "/" + flowId + "/runs", body);
-        return FlowRun.fromApi(created);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asStringMap(Object body) {
+        return body instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    /**
+     * The {@code tag_values} for one start: the connected customer's shared values the text names,
+     * opened with the service key and sealed to the company (the service key) and to the customer.
+     * A value that is absent or does not open is left out; {@code values_private} decides which are
+     * private (a slug it does not name is private).
+     */
+    private Map<String, Object> compileTagValues(
+        List<FlowText.PartyTag> tags, PublishedFlow published, String connectionId, Map<String, Object> detail) {
+        String userId = Parse.str(detail.get("user_id"));
+        String shareCode = Parse.str(detail.get("share_code"));
+        if (userId == null || userId.isEmpty() || shareCode == null || shareCode.isEmpty()) {
+            throw new ConfigException("connection " + connectionId + " has no customer key to seal the run's values to");
+        }
+        Map<String, Object> values = asStringMap(detail.get("values"));
+        Map<String, Object> privacy = asStringMap(detail.get("values_private"));
+        List<Object[]> entries = new ArrayList<>();
+        for (FlowText.PartyTag t : tags) {
+            Object wrapper = asStringMap(values.get(t.field())).get("value");
+            if (!(wrapper instanceof String w) || w.isEmpty()) {
+                continue;
+            }
+            String v;
+            try {
+                v = Crypto.decrypt(Wrapper.of(w), privateKey);
+            } catch (RuntimeException ex) {
+                continue;
+            }
+            if (v == null || v.isEmpty()) {
+                continue;
+            }
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("v", v);
+            value.put("t", published.requestFieldTypes().get(t.field()));
+            entries.add(new Object[] {t.tag(), !Boolean.FALSE.equals(privacy.get(t.field())), value});
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("company", sealedFor(servicePublicKey(), entries));
+        out.put(userId, sealedFor(recipientPublicKey(shareCode), entries));
+        return out;
+    }
+
+    /** One recipient's sealed set. One bound customer: every private value the text names is its own. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> sealedFor(java.security.interfaces.RSAPublicKey key, List<Object[]> entries) {
+        Map<String, Object> publicMap = new LinkedHashMap<>();
+        Map<String, Object> priv = new LinkedHashMap<>();
+        for (Object[] e : entries) {
+            String tag = (String) e[0];
+            Map<String, Object> value = (Map<String, Object>) e[2];
+            if (!(Boolean) e[1]) {
+                publicMap.put(tag, value);
+            } else {
+                priv.put(tag, Json.write(Crypto.encryptForPublicKey(Json.write(value), key)));
+            }
+        }
+        String fingerprint;
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.getEncoded());
+            fingerprint = java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("recipient_pubkey_sha256", fingerprint);
+        out.put("public", Json.write(Crypto.encryptForPublicKey(Json.write(publicMap), key)));
+        out.put("public_tags", new ArrayList<>(publicMap.keySet()));
+        out.put("private", priv);
+        return out;
     }
 
     /**
