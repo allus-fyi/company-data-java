@@ -156,6 +156,11 @@ answers and (for the contract fixture) download every generated output document.
 | Drive (per poll) | `Client.flowRun(id)`; if it's the company's turn `Client.processFlowRun(id, fill)` |
 | Complete | `Client.flowRunAnswers(run)`; document mode also `Client.flowRunDocument(id, outputKey)` for each output document in the company participant's `documents()` |
 
+When the company's submit lands on a document-mode leaf, `processFlowRun` generates the output
+documents itself — including uploading, as generation inputs, every participant source PDF (a PDF
+answered on a flow field, or one copied from a customer's connection at run start) the leaf's rules
+name and the run holds — so the handler needs no extra call for them.
+
 The demo ships **two importable flow packages** under [`fixtures/`](fixtures/):
 
 | Fixture zip | Shape |

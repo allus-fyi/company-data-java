@@ -288,6 +288,28 @@ public final class Crypto {
         return wrapper;
     }
 
+    /** A fresh random 32-byte AES-256-GCM key for one {@code /generate} call. */
+    static byte[] newOneTimeKey() {
+        byte[] otk = new byte[32];
+        RNG.nextBytes(otk);
+        return otk;
+    }
+
+    /**
+     * Seal {@code plaintext} under a one-time key → {@code base64(iv(12)||ciphertext||tag(16))} — the
+     * layout of a bundle's {@code values}. A generation input (a held source PDF's envelope) is sealed
+     * the same way under the same key as the call's {@code values}, with its own fresh iv.
+     */
+    static String oneTimeKeySeal(byte[] otk, String plaintext) {
+        byte[] iv = new byte[GCM_IV_LEN];
+        RNG.nextBytes(iv);
+        byte[] ctWithTag = aesGcmEncrypt(otk, iv, plaintext.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        byte[] blob = new byte[GCM_IV_LEN + ctWithTag.length]; // iv(12) || ciphertext || tag(16)
+        System.arraycopy(iv, 0, blob, 0, GCM_IV_LEN);
+        System.arraycopy(ctWithTag, 0, blob, GCM_IV_LEN, ctWithTag.length);
+        return Base64.getEncoder().encodeToString(blob);
+    }
+
     /**
      * The one-time-key bundle a flow run's {@code /generate} takes: the WHOLE answer map, sealed under
      * a key used once and never stored. {@code answers} is {@code {slug: plaintext}} (a non-string
@@ -297,24 +319,22 @@ public final class Crypto {
      * {@code {{tag}}} over this map, so a slug missing from it prints blank on the contract.
      */
     static Map<String, Object> oneTimeKeyBundle(Map<String, Object> answers) {
+        return oneTimeKeyBundle(answers, newOneTimeKey());
+    }
+
+    /**
+     * As {@link #oneTimeKeyBundle(Map)}, sealed under {@code otk} — the key the call's generation
+     * inputs were sealed under.
+     */
+    static Map<String, Object> oneTimeKeyBundle(Map<String, Object> answers, byte[] otk) {
         Map<String, Object> strMap = new LinkedHashMap<>();
         for (Map.Entry<String, Object> e : answers.entrySet()) {
             strMap.put(e.getKey(), e.getValue() instanceof String s ? s
                 : fyi.allme.allus.companydata.internal.Json.write(e.getValue()));
         }
-        byte[] payload = fyi.allme.allus.companydata.internal.Json.write(strMap)
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        byte[] otk = new byte[32];
-        RNG.nextBytes(otk);
-        byte[] iv = new byte[GCM_IV_LEN];
-        RNG.nextBytes(iv);
-        byte[] ctWithTag = aesGcmEncrypt(otk, iv, payload); // ciphertext || tag(16)
-        byte[] blob = new byte[GCM_IV_LEN + ctWithTag.length]; // iv(12) || ciphertext || tag(16)
-        System.arraycopy(iv, 0, blob, 0, GCM_IV_LEN);
-        System.arraycopy(ctWithTag, 0, blob, GCM_IV_LEN, ctWithTag.length);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("otk", Base64.getEncoder().encodeToString(otk));
-        body.put("values", Base64.getEncoder().encodeToString(blob));
+        body.put("values", oneTimeKeySeal(otk, fyi.allme.allus.companydata.internal.Json.write(strMap)));
         return body;
     }
 

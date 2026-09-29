@@ -6,6 +6,8 @@ import fyi.allme.allus.companydata.internal.ModelDeps;
 import fyi.allme.allus.companydata.internal.Transport;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -1102,11 +1104,77 @@ public final class Client {
      * {@link FlowRun} (status {@code awaiting_<entry node's party>}).
      */
     public FlowRun triggerFlowRun(String flowId, String connectionId, Map<String, String> bindings) {
+        return triggerFlowRun(flowId, connectionId, bindings, List.of());
+    }
+
+    /**
+     * As {@link #triggerFlowRun(String, String, Map)}, carrying {@code sourceFiles} =
+     * {@code [{source_key, for_user_id, file}]}: one staged copy ({@link #stageRunFile}) per answered
+     * connection source ({@code conn:<party>:<request_slug>}) a rule of the pinned version names, per
+     * distinct bound user — the company's own copy sealed to the service key. A start whose list is
+     * not exactly that set is refused with {@link ApiException} {@code flows.source_files_invalid},
+     * whose {@link ApiException#details()} carry {@code missing} ({@code [{source_key, for_user_id}]})
+     * and {@code unexpected} ({@code [file]}); nothing is written.
+     */
+    public FlowRun triggerFlowRun(
+            String flowId, String connectionId, Map<String, String> bindings, List<Map<String, String>> sourceFiles) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("target", Map.of("connection_id", connectionId));
         body.put("bindings", bindings);
+        if (sourceFiles != null && !sourceFiles.isEmpty()) {
+            List<Map<String, Object>> files = new ArrayList<>();
+            for (Map<String, String> sf : sourceFiles) {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("source_key", sf.get("source_key"));
+                entry.put("for_user_id", sf.get("for_user_id"));
+                entry.put("file", sf.get("file"));
+                files.add(entry);
+            }
+            body.put("source_files", files);
+        }
         Object created = http.post(FLOWS + "/" + flowId + "/runs", body);
         return FlowRun.fromApi(created);
+    }
+
+    /**
+     * Stage one sealed copy of a connection source for a run start → its {@code file}.
+     * {@code POST /api/company-data/flows/{flowId}/run-files} with {@code {value}}: {@code sealedValue}
+     * is the source's envelope JSON sealed to ONE bound user (a {@code {"_enc":1,…}} wrapper, as the
+     * map {@link Crypto#encryptForPublicKey} returns or its JSON string). Name the returned file in
+     * {@link #triggerFlowRun(String, String, Map, List)}'s {@code sourceFiles}. An over-budget value is
+     * refused {@code documents.too_large}.
+     */
+    public String stageRunFile(String flowId, Object sealedValue) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("value", FlowSources.sealedString(sealedValue));
+        return FlowSources.responseFile(http.post(FLOWS + "/" + flowId + "/run-files", body));
+    }
+
+    /**
+     * Upload one bound party's copy of a binary answer on the company's turn → its {@code file}.
+     * {@code POST /api/company-data/flow-runs/{runId}/answer-files} with
+     * {@code {slug, for_user_id, value}}: {@code slug} a binary field of the current step,
+     * {@code forUserId} a bound party, {@code sealedValue} the file's envelope JSON sealed to that
+     * party's key (a wrapper map or its JSON string). Upload one copy per bound party, then submit
+     * {@code {"_enc_file": file}} as each party's answer value.
+     */
+    public String uploadAnswerFile(String runId, String slug, String forUserId, Object sealedValue) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("slug", slug);
+        body.put("for_user_id", forUserId);
+        body.put("value", FlowSources.sealedString(sealedValue));
+        return FlowSources.responseFile(http.post(FLOW_RUNS + "/" + runId + "/answer-files", body));
+    }
+
+    /**
+     * The company's own copy of a run's connection source, as stored — the sealed wrapper.
+     * {@code GET /api/company-data/flow-runs/{runId}/source-files/{sourceKey}} (the key, e.g.
+     * {@code conn:customer:passport}, is URL-encoded). The wrapper opens with the service key; its
+     * plaintext is the file's envelope JSON. {@link FlowRun#sourceFiles()} lists the run's keys.
+     */
+    public Wrapper flowRunSourceFile(String runId, String sourceKey) {
+        return binaryFetch(FLOW_RUNS + "/" + runId + "/source-files/"
+            + URLEncoder.encode(sourceKey, StandardCharsets.UTF_8).replace("+", "%20")).wrapper();
     }
 
     /** List this service's runs waiting on the company (the actionable queue). */
@@ -1211,6 +1279,12 @@ public final class Client {
             Object slug = row.get("slug");
             Object value = row.get("value");
             if (slug == null || value == null) {
+                continue;
+            }
+            // A file answer is a plaintext {"_enc_file": …} reference, not a wrapper; it stands in
+            // the map as that reference, which reads as answered.
+            if (FlowSources.fileRef(value) != null) {
+                out.put(String.valueOf(slug), FlowSources.fileRefMarker(value));
                 continue;
             }
             out.put(String.valueOf(slug), decryptValue(value));
@@ -1390,14 +1464,35 @@ public final class Client {
 
     /**
      * Document-mode company leaf: one-time-key value gather → POST /generate. Seals the company's
-     * decrypted answers with the one-time-key bundle and POSTs {@code {otk, values}}. Returns the
-     * raw API response {@code {documents, status}} — {@code documents} is one
+     * decrypted answers with the one-time-key bundle and POSTs {@code {otk, values, inputs}}. Before
+     * that, every participant PDF source the current leaf's rules name that the run HOLDS for the
+     * company — a {@code source_field} whose own answer is a file, a {@code source_connection} in
+     * {@link FlowRun#sourceFiles()} — is fetched ({@code slots/{slug}/file} resp.
+     * {@code source-files/{key}}), decrypted with the service key, sealed under the same one-time key
+     * and uploaded to {@code /generate/inputs}; {@code inputs} names them. Returns the raw API
+     * response {@code {documents, status}} — {@code documents} is one
      * {@code {output_key, party_key, document_id, position}} per produced (output document,
      * participant), {@code position} the step's 1-based place in the run's signing line or null for
-     * an unlisted party (idempotent — a repeat answers the same set).
+     * an unlisted party (idempotent — a repeat answers the same set). {@code flows.source_pdf_invalid}
+     * refuses a source that is not a usable PDF (the run stays {@code generating}).
      */
     public Object generateFlowDocument(FlowRun run) {
-        return http.post(FLOW_RUNS + "/" + run.id() + "/generate", Crypto.oneTimeKeyBundle(decryptRunAnswers(run)));
+        List<FlowSources.HeldSource> held = FlowSources.heldSources(
+            run.definition(), run.currentNode(), run.answers(), run.serviceUserId(), run.sourceFiles());
+        return FlowSources.generateWithInputs(
+            http::post, FLOW_RUNS + "/" + run.id() + "/generate", decryptRunAnswers(run), held,
+            src -> ownSourceEnvelope(run.id(), src));
+    }
+
+    /** The company's own copy of one held source, decrypted to its envelope JSON. */
+    private String ownSourceEnvelope(String runId, FlowSources.HeldSource src) {
+        Wrapper wrapper = "field".equals(src.kind())
+            ? binaryFetch(FLOW_RUNS + "/" + runId + "/slots/" + src.slug() + "/file").wrapper()
+            : flowRunSourceFile(runId, src.sourceKey());
+        if (wrapper == null) {
+            throw new DecryptException("no sealed copy of " + src.sourceKey() + " was served");
+        }
+        return Crypto.decrypt(wrapper, privateKey);
     }
 
     /** The company's per-node logic: returns the {@code {slug: value}} fill for the current node. */

@@ -275,6 +275,65 @@ Map<String, String> bindings = Map.of(
 client.triggerFlowRun(flowId, connection.id(), bindings);
 ```
 
+### `triggerFlowRun(flowId, connectionId, bindings, sourceFiles)`
+
+```java
+FlowRun triggerFlowRun(String flowId, String connectionId, Map<String, String> bindings)
+FlowRun triggerFlowRun(String flowId, String connectionId, Map<String, String> bindings,
+                       List<Map<String, String>> sourceFiles)
+```
+
+Start a run (`POST /api/company-data/flows/{flowId}/runs`). A leaf output rule's PDF can come from a
+company template, from a flow field's answer (`source_field` → source key `field:<slug>`) or from what
+a bound customer shared on its connection for a `pdf_document` request field (`source_connection` →
+`conn:<party>:<request_slug>`). A connection source is COPIED at run start: `sourceFiles` carries one
+staged copy (`stageRunFile`) per answered connection source a rule of the latest published version
+names, per distinct bound user — your own copy sealed to the service key, a person's to their public
+key — each as `{source_key, for_user_id, file}`. The three-argument form sends none.
+
+* **Throws:** `ApiException` `flows.source_files_invalid` (400) when the list is not exactly that set;
+  its `details()` carry `missing` (`[{source_key, for_user_id}]`) and `unexpected` (`[file]`), and
+  nothing is written.
+
+### `stageRunFile(flowId, sealedValue)`
+
+```java
+String stageRunFile(String flowId, Object sealedValue)
+```
+
+Stage one sealed copy of a connection source for a run start → its `file`
+(`POST /api/company-data/flows/{flowId}/run-files`, body `{value}`). `sealedValue` is the source's
+envelope JSON sealed to ONE bound user — the map `Crypto.encryptForPublicKey` returns, or its JSON
+string. An over-budget value is refused `documents.too_large`.
+
+```java
+String file = client.stageRunFile(flowId, Crypto.encryptForPublicKey(envelopeJson, personKey));
+client.triggerFlowRun(flowId, connection.id(), bindings, List.of(
+    Map.of("source_key", "conn:customer:passport", "for_user_id", personUserId, "file", file)));
+```
+
+### `uploadAnswerFile(runId, slug, forUserId, sealedValue)`
+
+```java
+String uploadAnswerFile(String runId, String slug, String forUserId, Object sealedValue)
+```
+
+Upload one bound party's copy of a binary answer on the company's own turn → its `file`
+(`POST /api/company-data/flow-runs/{runId}/answer-files`, body `{slug, for_user_id, value}`). `slug`
+is a binary field of the current step, `sealedValue` the file's envelope JSON sealed to that party's
+key. Upload one copy per bound party, then submit `{"_enc_file": file}` as each party's answer value.
+
+### `flowRunSourceFile(runId, sourceKey)`
+
+```java
+Wrapper flowRunSourceFile(String runId, String sourceKey)
+```
+
+The company's own copy of a run's connection source as stored — the sealed wrapper
+(`GET /api/company-data/flow-runs/{runId}/source-files/{sourceKey}`, the key URL-encoded). It opens
+with the service key; its plaintext is the file's envelope JSON. `FlowRun.sourceFiles()` is the run's
+`{source_key: file}` map of your own copies (empty when none).
+
 ### `flowRunAnswers(run)`
 
 ```java
@@ -785,6 +844,16 @@ if ("completed".equals(run.status())) {
 leaf) returns the raw API response `{documents, status}` — one `{output_key, party_key,
 document_id, position}` per produced (output document, participant); a repeat answers
 the same set.
+
+**Participant PDF sources are uploaded for you.** Before it generates, `generateFlowDocument` (and so
+`processFlowRun`) uploads every source PDF the leaf's rules name that the run holds for the company —
+a `source_field` whose own answer is a file (read from `slots/{slug}/file`) and a `source_connection`
+in `FlowRun.sourceFiles()` (read from `source-files/{key}`): each is decrypted with the service key,
+sealed under the call's one-time key and posted to `…/generate/inputs`, and the generate body names
+them in `inputs`. `flows.generate_inputs_mismatch` (400) refuses inputs that are not exactly the held
+set; `flows.source_pdf_invalid` (400) refuses a source that is not a usable PDF, and the run stays
+`generating`. `CustomerClient.generateFlowDocument` does the same with its own copies, read through
+`…/answer-files/{file}` and decrypted with the account key.
 
 ### Reacting to status changes in the pump
 

@@ -278,6 +278,12 @@ public final class CustomerClient {
             if (!own.equals(forUser) || slug == null || value == null) {
                 continue;
             }
+            // A file answer is a plaintext {"_enc_file": …} reference, not a wrapper; it stands in
+            // the map as that reference, which reads as answered.
+            if (FlowSources.fileRef(value) != null) {
+                out.put(String.valueOf(slug), FlowSources.fileRefMarker(value));
+                continue;
+            }
             out.put(String.valueOf(slug), decryptAccount(value));
         }
         return out;
@@ -328,6 +334,10 @@ public final class CustomerClient {
      * re-read then. The whole answer map comes from this company's OWN copy of the answers, opened
      * with the account key — every party's answers are sealed to every bound party, so that copy holds
      * the whole run and no service key is involved — and is sealed with the one-time-key bundle.
+     * Every participant PDF source the leaf's rules name that the run holds for this company (a
+     * {@code source_field} whose own answer is a file, a {@code source_connection} in
+     * {@link FlowRun#sourceFiles()}) is first fetched through {@code answer-files}, decrypted with the
+     * account key, sealed under the same one-time key and uploaded to {@code /generate/inputs}.
      * Returns the raw API response {@code {documents, status}} — {@code documents} is one
      * {@code {output_key, party_key, document_id, position}} per produced (output document,
      * participant) (idempotent — a repeat answers the same set).
@@ -346,8 +356,21 @@ public final class CustomerClient {
         if (own == null || own.isEmpty() || !own.equals(ownUserId(run))) {
             throw new ConfigException("run " + run.id() + " is not at a step this company answered");
         }
-        return http.post(CONN + "/" + connectionId + "/flow-runs/" + run.id() + "/generate",
-            Crypto.oneTimeKeyBundle(decryptOwnRunAnswers(run)));
+        String base = CONN + "/" + connectionId + "/flow-runs/" + run.id();
+        return FlowSources.generateWithInputs(
+            http::post, base + "/generate", decryptOwnRunAnswers(run),
+            FlowSources.heldSources(run.definition(), run.currentNode(), run.answers(), own, run.sourceFiles()),
+            src -> {
+                // This company's own copy of a held source — its own answer file, or its own copy of
+                // a connection source made at run start — both served by the answer-files route.
+                Wrapper wrapper = fetchBinary(base + "/answer-files/"
+                    + java.net.URLEncoder.encode(src.file(), java.nio.charset.StandardCharsets.UTF_8)
+                        .replace("+", "%20")).wrapper();
+                if (wrapper == null) {
+                    throw new DecryptException("no sealed copy of " + src.sourceKey() + " was served");
+                }
+                return decryptAccount(wrapper);
+            });
     }
 
     /** Encrypt one answer value for one flow party per the P4 key rule. */

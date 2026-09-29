@@ -51,6 +51,12 @@ public record FlowRun(
      * plugin helpers read as "unknown": every other party's value is then treated as private.
      */
     List<String> privateSlugs,
+    /**
+     * The viewer's own copies of the run's connection sources, {@code {source_key: file}} — the
+     * owning company's on the service {@code Client}, the customer's own on {@code CustomerClient}.
+     * Empty when the run holds none.
+     */
+    Map<String, String> sourceFiles,
     Map<String, Object> raw
 ) {
 
@@ -127,6 +133,15 @@ public record FlowRun(
             }
         }
 
+        Map<String, String> sourceFiles = new LinkedHashMap<>();
+        if (obj.get("source_files") instanceof Map<?, ?> sf) {
+            for (Map.Entry<?, ?> e : sf.entrySet()) {
+                if (e.getValue() instanceof String file) {
+                    sourceFiles.put(String.valueOf(e.getKey()), file);
+                }
+            }
+        }
+
         return new FlowRun(
             Parse.str(obj.get("id")),
             Parse.str(obj.get("flow_id")),
@@ -145,6 +160,7 @@ public record FlowRun(
             Parse.isoDateTime(obj.get("updated_at")),
             participants,
             privateSlugs,
+            sourceFiles,
             obj);
     }
 }
