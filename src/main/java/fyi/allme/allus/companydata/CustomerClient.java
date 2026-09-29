@@ -328,8 +328,9 @@ public final class CustomerClient {
      * re-read then. The whole answer map comes from this company's OWN copy of the answers, opened
      * with the account key — every party's answers are sealed to every bound party, so that copy holds
      * the whole run and no service key is involved — and is sealed with the one-time-key bundle.
-     * Returns the raw API response {@code {document_id, documents, status}} (idempotent — a repeat
-     * answers the same document set).
+     * Returns the raw API response {@code {documents, status}} — {@code documents} is one
+     * {@code {output_key, party_key, document_id, position}} per produced (output document,
+     * participant) (idempotent — a repeat answers the same set).
      *
      * @throws ConfigException when the run's current step is not bound to this company — the
      *     participant the run lists on {@code connectionId}

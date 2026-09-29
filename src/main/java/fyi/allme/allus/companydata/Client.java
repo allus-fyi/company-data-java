@@ -858,7 +858,7 @@ public final class Client {
      *       {@code {"encrypted":true,"value":{"_enc":1,...}}} — the company CANNOT decrypt that with
      *       its service key, so this fails clearly ({@link ApiException}
      *       {@code documents.recipient_encrypted}) rather than attempting a doomed service-key
-     *       decrypt. For a generated flow contract's OWN copy the company uses
+     *       decrypt. For a generated flow document's OWN copy the company uses
      *       {@link #flowRunDocument} — that copy IS service-key-encrypted.</li>
      * </ul>
      */
@@ -883,7 +883,7 @@ public final class Client {
                     0,
                     "documents.recipient_encrypted",
                     "This document is encrypted to its recipient and is not readable with the company "
-                        + "service key. For a generated flow contract, use flowRunDocument(runId) to "
+                        + "service key. For a generated flow document, use flowRunDocument(runId, outputKey) to "
                         + "download the company copy.");
             }
         }
@@ -1150,15 +1150,20 @@ public final class Client {
     }
 
     /**
-     * Download the company's OWN copy of a run's generated flow contract — the PLAINTEXT
-     * file bytes. GETs {@code /flow-runs/{runId}/document/file}, which serves the company-party copy
-     * encrypted to the SERVICE key (unlike {@link #documentFile}'s recipient-targeted copy), so the
-     * same {@link BinaryHandle} the slot-file download uses decrypts it → the
-     * {@code {"file":"data:…;base64,…"}} envelope → the file bytes. 404 ({@link ApiException})
-     * when the run has not generated a document yet.
+     * Download the company's OWN copy of one output document a run generated — the PLAINTEXT file
+     * bytes. {@code outputKey} names the output document (the {@code outputKey} of an entry in the
+     * company participant's {@code documents}, or the {@code output_key} of a generate response's
+     * {@code documents} entry). GETs {@code /flow-runs/{runId}/documents/{outputKey}/file}, which
+     * serves the company-party copy encrypted to the SERVICE key (unlike {@link #documentFile}'s
+     * recipient-targeted copy), so the same {@link BinaryHandle} the slot-file download uses
+     * decrypts it → the {@code {"file":"data:…;base64,…"}} envelope → the file bytes. 404
+     * ({@link ApiException}) {@code flows.run_not_found} for an unknown run,
+     * {@code flows.no_document} when that output was not produced or the company is not a bound
+     * party.
      */
-    public byte[] flowRunDocument(String runId) {
-        return BinaryHandle.lazy(FLOW_RUNS + "/" + runId + "/document/file", this::binaryFetch, this::decryptValue)
+    public byte[] flowRunDocument(String runId, String outputKey) {
+        return BinaryHandle.lazy(FLOW_RUNS + "/" + runId + "/documents/" + outputKey + "/file",
+                this::binaryFetch, this::decryptValue)
             .bytes();
     }
 
@@ -1386,8 +1391,10 @@ public final class Client {
     /**
      * Document-mode company leaf: one-time-key value gather → POST /generate. Seals the company's
      * decrypted answers with the one-time-key bundle and POSTs {@code {otk, values}}. Returns the
-     * raw API response {@code {document_id, documents, status}} (idempotent — a repeat answers the
-     * same document set).
+     * raw API response {@code {documents, status}} — {@code documents} is one
+     * {@code {output_key, party_key, document_id, position}} per produced (output document,
+     * participant), {@code position} the step's 1-based place in the run's signing line or null for
+     * an unlisted party (idempotent — a repeat answers the same set).
      */
     public Object generateFlowDocument(FlowRun run) {
         return http.post(FLOW_RUNS + "/" + run.id() + "/generate", Crypto.oneTimeKeyBundle(decryptRunAnswers(run)));
@@ -1403,8 +1410,9 @@ public final class Client {
      * High-level company turn: load → (if our turn) fill + advance + generate.
      * {@code fillNode(node, answers)} returns {@code {slug: value}}; the SDK encrypts per party,
      * submits, and — if the submit landed on a document-mode leaf — calls
-     * {@link #generateFlowDocument(FlowRun)}. Returns the latest {@link FlowRun}; when the run is
-     * not awaiting the company it is returned untouched.
+     * {@link #generateFlowDocument(FlowRun)}. Returns the latest {@link FlowRun} — after a generate,
+     * each participant's produced documents are on its {@code documents}; when the run is not
+     * awaiting the company it is returned untouched.
      */
     public FlowRun processFlowRun(String runId, FillNode fillNode) {
         return processFlowRun(runId, fillNode, Map.of());

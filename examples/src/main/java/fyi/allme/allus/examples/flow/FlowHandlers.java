@@ -7,6 +7,8 @@ import fyi.allme.allus.companydata.Client;
 import fyi.allme.allus.companydata.ConfigException;
 import fyi.allme.allus.companydata.Connection;
 import fyi.allme.allus.companydata.FlowRun;
+import fyi.allme.allus.companydata.FlowRunParticipant;
+import fyi.allme.allus.companydata.FlowRunParticipantDocument;
 import fyi.allme.allus.companydata.Identity;
 import fyi.allme.allus.companydata.ValidationException;
 
@@ -71,9 +73,9 @@ public final class FlowHandlers {
     private static final String CALL_CONNECTIONS = "Client.connections — resolves the person's own share code to the connection whose id the CUSTOMER party binds to";
     private static final String CALL_TRIGGER = "Client.triggerFlowRun — starts a run of the published flow for that connection, pinning the flow's latest published version";
     private static final String CALL_FLOW_RUN = "Client.flowRun — re-read on every poll to see whose turn the run is on";
-    private static final String CALL_PROCESS = "Client.processFlowRun — drives ONE company step: decrypts the answers so far, fills the node, type-checks the values, encrypts a copy per party, submits — and generates the document when the submit lands on a document-mode leaf";
+    private static final String CALL_PROCESS = "Client.processFlowRun — drives ONE company step: decrypts the answers so far, fills the node, type-checks the values, encrypts a copy per party, submits — and generates the output documents when the submit lands on a document-mode leaf";
     private static final String CALL_ANSWERS = "Client.flowRunAnswers — the completed run's answers, decrypted with the service key";
-    private static final String CALL_DOCUMENT = "Client.flowRunDocument — downloads the company's own copy of the generated contract and decrypts it with the service key";
+    private static final String CALL_DOCUMENT = "Client.flowRunDocument — downloads the company's own copy of output document %s and decrypts it with the service key";
 
     private final Runtime rt;
 
@@ -254,7 +256,7 @@ public final class FlowHandlers {
     /**
      * The idempotent, short-cycled poll that IS the drive loop and the resume. Reads the platform run;
      * if it is the company's turn drives exactly ONE step; on completion fetches the answers and
-     * (document-mode) downloads the generated contract. A terminal run returns its cached result on every
+     * (document-mode) downloads every generated output document. A terminal run returns its cached result on every
      * poll until TTL/Clear.
      */
     public Map<String, Object> pollBody(String runId, Map<String, Object> run) {
@@ -393,9 +395,9 @@ public final class FlowHandlers {
     }
 
     /**
-     * Terminal: fetch the decrypted answers and, for a document-mode run, download the generated
-     * contract's company copy ({@link Client#flowRunDocument} — the run-scoped, service-key-decryptable
-     * surface).
+     * Terminal: fetch the decrypted answers and, for a document-mode run, download the company's copy
+     * of EVERY output document the run produced ({@link Client#flowRunDocument} — the run-scoped,
+     * service-key-decryptable surface).
      */
     private Map<String, Object> complete(Map<String, Object> run, Client client, FlowRun flowRun,
                                          String flowRunId) {
@@ -413,27 +415,51 @@ public final class FlowHandlers {
         run.put("answers", answersOut);
 
         if ("document".equals(flowRun.outputMode())) {
-            try {
-                run.put("calls", addCall(run.get("calls"), CALL_DOCUMENT));
-                byte[] bytes = client.flowRunDocument(flowRunId);
+            List<Map<String, Object>> documents = new ArrayList<>();
+            for (String outputKey : companyOutputKeys(flowRun)) {
                 Map<String, Object> doc = new LinkedHashMap<>();
-                doc.put("status", "downloaded");
-                doc.put("downloaded", true);
-                doc.put("bytes", bytes == null ? 0 : bytes.length);
-                run.put("document", doc);
-            } catch (ApiException e) {
-                // The run completed but the document is not retrievable yet — report it, don't fail.
-                Map<String, Object> doc = new LinkedHashMap<>();
-                doc.put("status", "unavailable");
-                doc.put("downloaded", false);
-                doc.put("error", e.getMessage());
-                run.put("document", doc);
+                doc.put("output_key", outputKey);
+                try {
+                    run.put("calls", addCall(run.get("calls"), String.format(CALL_DOCUMENT, outputKey)));
+                    byte[] bytes = client.flowRunDocument(flowRunId, outputKey);
+                    doc.put("status", "downloaded");
+                    doc.put("downloaded", true);
+                    doc.put("bytes", bytes == null ? 0 : bytes.length);
+                } catch (ApiException e) {
+                    // The run completed but this output is not retrievable — report it, don't fail.
+                    doc.put("status", "unavailable");
+                    doc.put("downloaded", false);
+                    doc.put("error", e.getMessage());
+                }
+                documents.add(doc);
             }
+            run.put("documents", documents);
         }
 
         run.put("status", "completed");
         run.put("completed", true);
         return run;
+    }
+
+    /**
+     * The output keys of the documents the run produced for the company, in signing-line order,
+     * each once — read off every participant row bound to the company's own user id (a company can
+     * hold more than one party of a run, and each such row carries a copy of every output).
+     */
+    private static List<String> companyOutputKeys(FlowRun flowRun) {
+        List<String> keys = new ArrayList<>();
+        for (FlowRunParticipant participant : flowRun.participants()) {
+            if (!java.util.Objects.equals(participant.personUserId(), flowRun.companyUserId())) {
+                continue;
+            }
+            for (FlowRunParticipantDocument doc : participant.documents()) {
+                String key = doc.outputKey();
+                if (key != null && !key.isEmpty() && !keys.contains(key)) {
+                    keys.add(key);
+                }
+            }
+        }
+        return keys;
     }
 
     /**
@@ -458,7 +484,7 @@ public final class FlowHandlers {
      * The {@code GET /api/runs/{runId}} response: the SHARED run envelope (outer
      * {@code {status:"pending"|"done"|"failed", result?, error?, calls}}) with the pinned FLOW shape
      * nested under {@code result} ({@code {status:"running"|"waiting_person"|"completed", steps,
-     * answers?, document?}}). The shared frontend reads progress ONLY from {@code run.result} and keeps
+     * answers?, documents?}}). The shared frontend reads progress ONLY from {@code run.result} and keeps
      * polling ONLY while the outer status is {@code "pending"}, so the inner flow status must NOT sit at
      * the top level — it drives under {@code "pending"} until the platform run completes ({@code "done"})
      * or errors ({@code "failed"}).
@@ -473,8 +499,8 @@ public final class FlowHandlers {
         if (run.containsKey("answers")) {
             result.put("answers", run.get("answers"));
         }
-        if (run.containsKey("document")) {
-            result.put("document", run.get("document"));
+        if (run.containsKey("documents")) {
+            result.put("documents", run.get("documents"));
         }
 
         Map<String, Object> out = new LinkedHashMap<>();

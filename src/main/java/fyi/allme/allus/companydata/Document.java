@@ -45,9 +45,10 @@ public record Document(
     // method, content_sha256, plain_sha256, signer_first_name, signer_last_name,
     // signer_name_verified, ip, user_agent, created_at.
     List<Map<String, Object>> signatures,
-    // Present only on a contract-flow run-participant document: the run's ordered signature
-    // summary, one entry per participant owing an act — each
-    // {party_key, document_id, position, status, action, acted_at}. Null on any other document.
+    // Present only on a contract-flow run-participant document: the WHOLE run's signing line,
+    // one entry per (output document, participant) in line order — each
+    // {output_key, name, party_key, document_id, position, status, action, acted_at}. Every
+    // document of the run carries the same summary. Null on any other document.
     List<Map<String, Object>> runSignatures,
     Function<Object, String> decryptValue,  // closure over the service key; never a key arg
     Map<String, Object> raw

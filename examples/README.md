@@ -13,7 +13,7 @@ families served together:
 ~90 % of the logic is a shared frontend fetched from a pinned release; this
 project is the thin Java backend that implements the
 [demo-backend contract](https://github.com/allme-sdk/example-test-suite)
-(**contract v3**). Every handler goes through the SDK's **intended top-level
+(**contract v4**). Every handler goes through the SDK's **intended top-level
 functions** (`OAuthClient`, `Client`, `TwoFactorClient` — never internals, never
 raw platform HTTP); the identity OIDC scenario (5) additionally uses the standard
 [Nimbus `oauth2-oidc-sdk`](https://connect2id.com/products/nimbus-oauth-openid-connect-sdk)
@@ -53,7 +53,7 @@ http://localhost:8091**. In detail, `Main`:
 2. on first run, downloads the **pinned** frontend release named in
    `frontend.lock`, **verifies its sha256**, and unpacks it to `.frontend/<tag>/`
    (a present, verified bundle is a cache hit — nothing is re-fetched),
-3. checks the bundle's `contract.json` version against the backend's (**v3**) and
+3. checks the bundle's `contract.json` version against the backend's (**v4**) and
    refuses a mismatch,
 4. refuses a busy port with a clear message, then
 5. serves port `8091` on **all interfaces**, printing every URL it is reachable on,
@@ -147,14 +147,14 @@ fails it.
 
 Trigger a flow run and drive the company party through it with type-checked step
 filling; hand a turn to the person's phone; on completion read the decrypted
-answers and (for the contract fixture) download the generated document.
+answers and (for the contract fixture) download every generated output document.
 
 | Step | SDK call(s) |
 |---|---|
 | Resolve | `Client.requestFields()` matched by flow name + published version; `Client.connections()` matched by share code |
 | Trigger | `Client.identity()` (company party) + the resolved connection (customer party) → `Client.triggerFlowRun(...)` |
 | Drive (per poll) | `Client.flowRun(id)`; if it's the company's turn `Client.processFlowRun(id, fill)` |
-| Complete | `Client.flowRunAnswers(run)`; document mode also `Client.flowRunDocument(id)` |
+| Complete | `Client.flowRunAnswers(run)`; document mode also `Client.flowRunDocument(id, outputKey)` for each output document in the company participant's `documents()` |
 
 The demo ships **two importable flow packages** under [`fixtures/`](fixtures/):
 
@@ -162,6 +162,11 @@ The demo ships **two importable flow packages** under [`fixtures/`](fixtures/):
 |---|---|
 | `fixtures/info-gathering.zip` | `data_only` — a few company steps (text, an **email** validation-demo step, an address composite) then one person turn. |
 | `fixtures/contract.zip` | `document` — a company step, then a signature leaf that generates a document. |
+
+A document leaf can produce several named **output documents** (e.g. "Contract" and "Addendum").
+Generation answers `{documents: [{output_key, party_key, document_id, position}], status}` — one entry
+per produced (output document, participant). On completion the handler downloads the company's own
+copy of EACH output and reports them as `documents: [{output_key, status, downloaded}]`.
 
 Import the chosen fixture in the portal (service settings → Flows → Import) and
 **publish** it, then enter the flow's **name** + the **published version** the
@@ -276,7 +281,7 @@ the same step; the startup guard refuses a mismatch loudly).
 | **`Could not resolve … company-data:0.0.13`** | Install the SDK first, from the repo root: `mvn -q install -DskipTests`. |
 | **`port 8091 is busy`** | Another example (or process) holds the port — only one runs at a time. Stop it, or `PORT=<n> mvn -q compile exec:java`. |
 | **Stale / wrong frontend** after a pin bump | `rm -rf .frontend/` and run again to re-download the pinned release. |
-| **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from what this backend implements (v3). Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |
+| **`contract mismatch: …`** | The pinned bundle's `contract.json` version differs from what this backend implements (v4). Bump `frontend.lock` to a matching release (and re-fetch), or update the backend. |
 | **`frontend checksum MISMATCH`** | The downloaded `dist.tar.gz` doesn't match `frontend.lock`'s `sha256`. Fix the `sha256` or re-download; the example refuses an unverified bundle. |
 | **A data scenario shows `failed` with an HTTP/transport error** | The `api_url` / credentials in the setup panel can't reach the platform — check them; the run correctly surfaces the error rather than a blank success. |
 | **`start_failed` (flow) naming a missing flow, or a key** | The flow name/published version, service PEM, or passphrase is wrong — re-check them against the portal's flow list (name + "Published vN") and Save again. |

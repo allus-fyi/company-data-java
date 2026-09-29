@@ -43,8 +43,8 @@ import java.util.regex.Pattern;
  * with no saved config → 409 not_configured.
  */
 public final class Server {
-    /** The single contract version the whole suite implements (company-data is the highest at v3). */
-    public static final int CONTRACT_VERSION = 3;
+    /** The single contract version the whole suite implements. */
+    public static final int CONTRACT_VERSION = 4;
     static final String SDK = "java";
 
     private static final Pattern P_CONFIG = Pattern.compile("^/api/scenarios/([\\w:.\\-]+)/config$");

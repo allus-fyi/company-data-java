@@ -309,7 +309,7 @@ your leaf submit. The answer map comes from your OWN copy of the run's answers, 
 key — every party's answers are sealed to every bound party, so that copy holds the whole run and no
 service key is involved.
 
-* **Returns:** the raw API response `{document_id, documents, status}`; a repeat answers the same document set.
+* **Returns:** the raw API response `{documents, status}` — one `{output_key, party_key, document_id, position}` per produced (output document, participant); a repeat answers the same set.
 * **Throws:** `ConfigException` when the run's current step is not bound to your company; `AuthException`, `ApiException`, `DecryptException`, `RateLimitException`.
 
 ### `logs(limit, offset)`
@@ -686,7 +686,7 @@ Document doc = client.document(contract.id());
 // A BROADCAST document is stored plaintext and comes back as raw bytes. A
 // PER-PERSON / private document is encrypted to the RECIPIENT's key, which the
 // company service key cannot read — that throws ApiException("documents.recipient_encrypted").
-// For the company's own copy of a generated flow contract, use flowRunDocument(runId) instead.
+// For the company's own copy of a generated flow document, use flowRunDocument(runId, outputKey) instead.
 byte[] pdf = client.documentFile(contract.id());
 
 // A per-person json document is an encrypted wrapper — .json() decrypts it
@@ -733,36 +733,58 @@ document, and on a file document with no stored plaintext hash). Each entry of
 `action`/`method`/`content_sha256`/`ip`/`user_agent`/`created_at` keys.
 
 A contract-flow-generated document can also read `status() == "waiting"` — a
-run-participant copy whose signer has not been reached yet in the run's ordered
-signing plan. It is read-only: `updateDocumentStatus` throws an `ApiException` with
+run-participant copy whose signer has not been reached yet in the run's signing
+line. It is read-only: `updateDocumentStatus` throws an `ApiException` with
 `errorKey() equal to "documents.run_managed"` (409) if you try to write `status` on a
 run-participant document while it is `waiting`, `ready_to_sign` or `offering` — that
 status moves only through flow generation, the run's own advance, sign/accept, or a
-run cancel/decline. Such a document's `runSignatures()` carries the run's ordered
-signature summary.
+run cancel/decline. Such a document's `runSignatures()` carries the WHOLE run's
+signing line — one entry per (output document, participant), in line order, each
+`{output_key, name, party_key, document_id, position, status, action, acted_at}`; every
+document of the run carries the same summary.
 
-### `flowRunDocument(runId)`
+### `flowRunDocument(runId, outputKey)`
 
 ```java
-byte[] flowRunDocument(String runId)
+byte[] flowRunDocument(String runId, String outputKey)
 ```
 
-#491 gap 2: download the company's OWN copy of a completed flow run's generated
-contract — the PLAINTEXT file bytes. `GET /api/company-data/flow-runs/{runId}/document/file`
+Download the company's OWN copy of one output document a flow run generated — the
+PLAINTEXT file bytes. A document leaf can produce several named output documents
+(e.g. "Contract" and "Addendum"); `outputKey` names one of them — the `outputKey()` of
+an entry in the company participant's `documents()`, or the `output_key` of a generate
+response's `documents` entry. `GET /api/company-data/flow-runs/{runId}/documents/{outputKey}/file`
 serves the company-party copy encrypted to the SERVICE key (unlike
 `documentFile`'s recipient-targeted copy), so it decrypts with your service key
 like any other binary field.
 
+A `FlowRun`'s `participants()` are `FlowRunParticipant(partyKey, personUserId,
+connectionId, documents)`; `documents()` is that participant's own copy of each output
+document — `FlowRunParticipantDocument(outputKey, name, documentId, documentStatus,
+requiresSignature, requiresAcceptance, position, action, actedAt)`, ordered by
+signing-line position (`position` is the step's 1-based place in the run's ONE signing
+line, `null` for a party an output's signer list does not name).
+
 ```java
 FlowRun run = client.flowRun(runId);
 if ("completed".equals(run.status())) {
-    byte[] contractPdf = client.flowRunDocument(runId);
-    Files.write(Path.of("/tmp/contract-" + runId + ".pdf"), contractPdf);
+    for (FlowRunParticipant p : run.participants()) {
+        if (!p.partyKey().equals(run.companyPartyKey())) continue;
+        for (FlowRunParticipantDocument d : p.documents()) {
+            byte[] pdf = client.flowRunDocument(runId, d.outputKey());
+            Files.write(Path.of("/tmp/" + d.outputKey() + "-" + runId + ".pdf"), pdf);
+        }
+    }
 }
 ```
 
 * **Returns:** the plaintext file bytes.
-* **Throws:** `ApiException` (404 when the run has not generated a document yet), `AuthException`, `DecryptException`, `RateLimitException`.
+* **Throws:** `ApiException` (404 `flows.run_not_found` for an unknown run, or `flows.no_document` when that output was not produced or the company is not a bound party), `AuthException`, `DecryptException`, `RateLimitException`.
+
+`generateFlowDocument(run)` (and `processFlowRun`, which chains it at a document-mode
+leaf) returns the raw API response `{documents, status}` — one `{output_key, party_key,
+document_id, position}` per produced (output document, participant); a repeat answers
+the same set.
 
 ### Reacting to status changes in the pump
 

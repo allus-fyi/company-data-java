@@ -71,8 +71,11 @@ class FlowRunTest {
         """;
 
     @SuppressWarnings("unchecked")
+    private static final String GENERATED = "{\"documents\":[{\"output_key\":\"out_1\",\"party_key\":\"company\","
+        + "\"document_id\":\"doc-9\",\"position\":1}],\"status\":\"awaiting_signature\"}";
+
     private static Map<String, Object> runObj(String status, String current, Object answers,
-            String defJson, String outputMode, String documentId) {
+            String defJson, String outputMode, String companyDocumentId) {
         try {
             Map<String, Object> def = (Map<String, Object>) Json.parse(defJson != null ? defJson : FLOW_DEF);
             Map<String, Object> m = new LinkedHashMap<>();
@@ -85,7 +88,26 @@ class FlowRunTest {
             m.put("bindings", Map.of("company", COMPANY_UID, "person", PERSON_UID));
             m.put("status", status);
             m.put("current_node", current);
-            m.put("document_id", documentId);
+            Map<String, Object> company = new LinkedHashMap<>();
+            company.put("party_key", "company");
+            company.put("person_user_id", COMPANY_UID);
+            company.put("connection_id", null);
+            List<Object> documents = new java.util.ArrayList<>();
+            if (companyDocumentId != null) {
+                Map<String, Object> doc = new LinkedHashMap<>();
+                doc.put("output_key", "out_1");
+                doc.put("name", "Contract");
+                doc.put("document_id", companyDocumentId);
+                doc.put("document_status", "ready_to_sign");
+                doc.put("requires_signature", true);
+                doc.put("requires_acceptance", false);
+                doc.put("position", 1);
+                doc.put("action", null);
+                doc.put("acted_at", null);
+                documents.add(doc);
+            }
+            company.put("documents", documents);
+            m.put("participants", List.of(company));
             m.put("output_mode", outputMode);
             m.put("definition", def);
             m.put("answers", answers != null ? answers : List.of());
@@ -271,12 +293,14 @@ class FlowRunTest {
             (method, url, jsonBody, data) -> {
                 captured[0] = url;
                 captured[1] = jsonBody;
-                return FakeTransport.json(200, "{\"document_id\":\"doc-9\",\"status\":\"awaiting_signature\"}");
+                return FakeTransport.json(200, GENERATED);
             });
         Client client = new Client(config(tmp), t);
         FlowRun run = FlowRun.fromApi(runObj("generating", "n1", answers, null, "document", null));
         Object res = client.generateFlowDocument(run);
-        assertEquals("doc-9", ((Map<String, Object>) res).get("document_id"));
+        List<Map<String, Object>> docs = (List<Map<String, Object>>) ((Map<String, Object>) res).get("documents");
+        assertEquals("doc-9", docs.get(0).get("document_id"));
+        assertEquals("out_1", docs.get(0).get("output_key"));
         assertTrue(((String) captured[0]).endsWith("/company-data/flow-runs/run-1/generate"));
 
         Map<String, Object> body = (Map<String, Object>) captured[1];
@@ -327,14 +351,15 @@ class FlowRunTest {
                     return FakeTransport.json(200, json(runObj("generating", "n1", null, single, "document", null)));
                 }
                 assertTrue(url.endsWith("/generate"), "unexpected write " + url);
-                return FakeTransport.json(200, "{\"document_id\":\"doc-9\",\"status\":\"awaiting_signature\"}");
+                return FakeTransport.json(200, GENERATED);
             });
         Client client = new Client(config(tmp), t);
         FlowRun run = client.processFlowRun("run-1", (node, answers) -> Map.of("company_name", "ACME BV"));
         assertTrue(posts.stream().anyMatch(p -> p.endsWith("/answers")));
         assertTrue(posts.stream().anyMatch(p -> p.endsWith("/generate")));
         assertEquals("awaiting_signature", run.status());
-        assertEquals("doc-9", run.documentId());
+        assertEquals("doc-9", run.participants().get(0).documents().get(0).documentId());
+        assertEquals("out_1", run.participants().get(0).documents().get(0).outputKey());
     }
 
     @Test
