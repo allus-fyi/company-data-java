@@ -323,6 +323,9 @@ public final class CustomerClient {
         return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/answers", out);
     }
 
+    /**
+     * Declines a flow run, cancelling it for every party. Accepted only on your own turn: your answer turn or your own open signing step. Any other time the API refuses it with error_key flows.not_your_turn (403).
+     */
     public Object declineFlowRun(String connectionId, String runId) {
         return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/decline", null);
     }
