@@ -11,6 +11,12 @@ import java.util.Map;
  * the body provided one), a human-readable {@link #apiMessage()}, and the error
  * body's remaining fields as {@link #details()}. {@link RateLimitException} is a
  * 429 subclass.
+ *
+ * <p>A 503 {@code db.writes_paused} means saving is paused (the platform cannot
+ * complete a save in every region). Nothing was written, so the call is safe to
+ * repeat; the response's {@code Retry-After} is 30 seconds. Any call that is not a
+ * GET, the change-feed drains and {@code OAuthClient.pollResult} can throw it; the
+ * token request cannot. The SDK does not retry it.
  */
 public class ApiException extends RuntimeException {
     private final int status;
