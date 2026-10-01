@@ -1131,8 +1131,10 @@ public final class Client {
      * connection source ({@code conn:<party>:<request_slug>}) a rule of the pinned version names, per
      * distinct bound user — the company's own copy sealed to the service key. A start whose list is
      * not exactly that set is refused with {@link ApiException} {@code flows.source_files_invalid},
-     * whose {@link ApiException#details()} carry {@code missing} ({@code [{source_key, for_user_id}]})
-     * and {@code unexpected} ({@code [file]}); nothing is written.
+     * whose {@link ApiException#details()} carry {@code missing}
+     * ({@code [{source_key, for_user_id, source_user_id}]} — {@code source_user_id} the customer bound
+     * to the source's party, whose shared file each copy is) and {@code unexpected} ({@code [file]});
+     * nothing is written.
      */
     public FlowRun triggerFlowRun(
             String flowId, String connectionId, Map<String, String> bindings, List<Map<String, String>> sourceFiles) {
@@ -1265,14 +1267,20 @@ public final class Client {
 
     /**
      * Stage one sealed copy of a connection source for a run start → its {@code file}.
-     * {@code POST /api/company-data/flows/{flowId}/run-files} with {@code {value}}: {@code sealedValue}
-     * is the source's envelope JSON sealed to ONE bound user (a {@code {"_enc":1,…}} wrapper, as the
-     * map {@link Crypto#encryptForPublicKey} returns or its JSON string). Name the returned file in
-     * {@link #triggerFlowRun(String, String, Map, List)}'s {@code sourceFiles}. An over-budget value is
-     * refused {@code documents.too_large}.
+     * {@code POST /api/company-data/flows/{flowId}/run-files} with {@code {source_user_id, value}}:
+     * {@code sourceUserId} is the connected customer whose shared PDF this copies (the
+     * {@code source_user_id} a refused start's {@code missing} entry names — the user bound to the
+     * source's party); the copy is stored in that customer's home region. {@code sealedValue} is the
+     * source's envelope JSON sealed to ONE bound user (a {@code {"_enc":1,…}} wrapper, as the map
+     * {@link Crypto#encryptForPublicKey} returns or its JSON string). Name the returned file in
+     * {@link #triggerFlowRun(String, String, Map, List)}'s {@code sourceFiles}; the start accepts it
+     * only for a source whose party is bound to {@code sourceUserId}. A customer that is not connected
+     * to the service is refused {@code flows.source_user_invalid}, an over-budget value
+     * {@code documents.too_large}.
      */
-    public String stageRunFile(String flowId, Object sealedValue) {
+    public String stageRunFile(String flowId, String sourceUserId, Object sealedValue) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("source_user_id", sourceUserId);
         body.put("value", FlowSources.sealedString(sealedValue));
         return FlowSources.responseFile(http.post(FLOWS + "/" + flowId + "/run-files", body));
     }

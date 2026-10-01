@@ -291,23 +291,26 @@ staged copy (`stageRunFile`) per answered connection source a rule of the latest
 names, per distinct bound user — your own copy sealed to the service key, a person's to their public
 key — each as `{source_key, for_user_id, file}`. The three-argument form sends none.
 
-* **Throws:** `ApiException` `flows.source_files_invalid` (400) when the list is not exactly that set;
-  its `details()` carry `missing` (`[{source_key, for_user_id}]`) and `unexpected` (`[file]`), and
+* **Throws:** `ApiException` `flows.source_files_invalid` (400) when the list is not exactly that set,
+  or a copy was staged for another customer than the one bound to its source's party; its `details()`
+  carry `missing` (`[{source_key, for_user_id, source_user_id}]`) and `unexpected` (`[file]`), and
   nothing is written.
 
-### `stageRunFile(flowId, sealedValue)`
+### `stageRunFile(flowId, sourceUserId, sealedValue)`
 
 ```java
-String stageRunFile(String flowId, Object sealedValue)
+String stageRunFile(String flowId, String sourceUserId, Object sealedValue)
 ```
 
 Stage one sealed copy of a connection source for a run start → its `file`
-(`POST /api/company-data/flows/{flowId}/run-files`, body `{value}`). `sealedValue` is the source's
-envelope JSON sealed to ONE bound user — the map `Crypto.encryptForPublicKey` returns, or its JSON
-string. An over-budget value is refused `documents.too_large`.
+(`POST /api/company-data/flows/{flowId}/run-files`, body `{source_user_id, value}`). `sourceUserId` is
+the customer bound to the source's party, whose shared PDF the copy is; the copy is stored in that
+customer's home region. `sealedValue` is the source's envelope JSON sealed to ONE bound user — the map
+`Crypto.encryptForPublicKey` returns, or its JSON string. A customer that is not connected to the
+service is refused `flows.source_user_invalid`, an over-budget value `documents.too_large`.
 
 ```java
-String file = client.stageRunFile(flowId, Crypto.encryptForPublicKey(envelopeJson, personKey));
+String file = client.stageRunFile(flowId, personUserId, Crypto.encryptForPublicKey(envelopeJson, personKey));
 client.triggerFlowRun(flowId, connection.id(), bindings, List.of(
     Map.of("source_key", "conn:customer:passport", "for_user_id", personUserId, "file", file)));
 ```
