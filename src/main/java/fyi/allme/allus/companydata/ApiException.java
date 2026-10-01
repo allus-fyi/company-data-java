@@ -17,6 +17,12 @@ import java.util.Map;
  * repeat; the response's {@code Retry-After} is 30 seconds. Any call that is not a
  * GET, the change-feed drains and {@code OAuthClient.pollResult} can throw it; the
  * token request cannot. The SDK does not retry it.
+ *
+ * <p>A 503 {@code platform.out_of_order} means the region serving the call is
+ * being rebuilt. The request was not processed, so the call is safe to repeat;
+ * the response's {@code Retry-After} is 300 seconds. Any call can throw it, reads
+ * and the change-feed drains included, except the {@code client_credentials}
+ * token request. The SDK does not retry it.
  */
 public class ApiException extends RuntimeException {
     private final int status;
