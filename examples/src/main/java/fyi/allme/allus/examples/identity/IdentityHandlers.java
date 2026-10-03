@@ -484,6 +484,7 @@ public final class IdentityHandlers {
         // The raw app-key ciphertext each decrypted value above came from — pairs with "values"
         // by claim name so the panel can show a decrypt actually ran on real bytes.
         result.put("values_cipher", out.valuesCipher());
+        result.put("attestations", out.attestations());
 
         if (id == 4) {
             // Connect: read the person's LIVE values via the service data client.
