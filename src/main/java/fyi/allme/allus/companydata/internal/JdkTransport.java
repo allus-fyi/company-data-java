@@ -18,24 +18,35 @@ import java.util.StringJoiner;
  * No retry/auth logic here — that lives in {@code Http}; this just sends bytes.
  */
 public final class JdkTransport implements Transport {
+    /** How long one request of the transport this class builds itself waits for the platform's answer. */
+    private static final Duration OWN_CLIENT_REQUEST_TIMEOUT = Duration.ofSeconds(45);
+    /** How long one request over an {@link HttpClient} the caller hands in waits. */
+    private static final Duration SUPPLIED_CLIENT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+
     private final HttpClient client;
+    private final Duration requestTimeout;
 
     public JdkTransport() {
         this(HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
             .followRedirects(HttpClient.Redirect.NORMAL)
-            .build());
+            .build(), OWN_CLIENT_REQUEST_TIMEOUT);
     }
 
     public JdkTransport(HttpClient client) {
+        this(client, SUPPLIED_CLIENT_REQUEST_TIMEOUT);
+    }
+
+    private JdkTransport(HttpClient client, Duration requestTimeout) {
         this.client = client;
+        this.requestTimeout = requestTimeout;
     }
 
     @Override
     public Response postForm(String url, Map<String, String> form, Map<String, String> headers) {
         String body = urlEncode(form);
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
-            .timeout(Duration.ofSeconds(60))
+            .timeout(requestTimeout)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         applyHeaders(b, headers);
@@ -46,7 +57,7 @@ public final class JdkTransport implements Transport {
     public Response get(String url, Map<String, String> params, Map<String, String> headers) {
         String full = (params == null || params.isEmpty()) ? url : url + "?" + urlEncode(params);
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(full))
-            .timeout(Duration.ofSeconds(60))
+            .timeout(requestTimeout)
             .GET();
         applyHeaders(b, headers);
         return send(b.build(), url);
@@ -58,7 +69,7 @@ public final class JdkTransport implements Transport {
             ? HttpRequest.BodyPublishers.noBody()
             : HttpRequest.BodyPublishers.ofByteArray(body);
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
-            .timeout(Duration.ofSeconds(60))
+            .timeout(requestTimeout)
             .method(method, publisher);
         applyHeaders(b, headers);
         return send(b.build(), url);

@@ -56,6 +56,14 @@ try {
 
 A **421 `region.rebase_required`** never reaches you when the platform is reachable: it is the global front door telling the SDK to send the call to the caller's home region, which the SDK does automatically (README, **How it's wired** → Regions). It surfaces as `ApiException` in exactly three cases: the refusal's base is absent, not a string, or empty (nothing to rebase to); the refusal names the SDK's own current base (a self-referential directive, so rebasing would loop); or a rebase already happened once for this request and a second 421 still comes back. In every other case the SDK rebases and retries transparently.
 
+## One request waits 45 seconds
+
+The SDK's own transport — for `Client`, `CustomerClient` and `OAuthClient` alike —
+waits 45 seconds for the platform's answer to one request, and the call then fails
+as it does when the connection drops; a `Transport` of your own keeps its own
+limit, and a `java.net.http.HttpClient` you hand to `JdkTransport` is given 60
+seconds per request. A request given up may still have completed on the platform.
+
 ## 503 `db.writes_paused` — saving is paused, retry
 
 While the platform cannot complete a save in every region, a call can answer

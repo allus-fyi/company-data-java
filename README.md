@@ -1336,6 +1336,13 @@ try {
 }
 ```
 
+**One request waits 45 seconds for the platform's answer.** The SDK's own
+transport — for `Client`, `CustomerClient` and `OAuthClient` alike — waits 45
+seconds for the platform's answer to one request, and the call then fails as it
+does when the connection drops; a `Transport` of your own keeps its own limit, and
+a `java.net.http.HttpClient` you hand to `JdkTransport` is given 60 seconds per
+request. A request given up may still have completed on the platform.
+
 **503 `db.writes_paused` — saving is paused, retry.** While the platform cannot
 complete a save in every region, any call that is not a GET, the change-feed
 drains (`processChanges`, `drainBatch`) and `OAuthClient.pollResult` can throw
