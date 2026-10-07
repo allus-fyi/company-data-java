@@ -1026,6 +1026,9 @@ another company's flow — the same methods with a leading `connectionId`):
   same rule: a field whose default reaches a private source. Every party of the run then sees that
   slug in `privateSlugs()`. A plugin answer's outputs are never private, whatever inputs produced
   them, so a plugin answer is never marked.
+- **The wire shape of `answers[].values[].value`.** It is the sealed wrapper serialized as a JSON string.
+  `submitFlowAnswers` (and `CustomerClient.submitFlowAnswers`) sends it that way, whether the value is the wrapper
+  `encryptFlowAnswer` returns or a string; `encryptFlowAnswer` itself still returns the wrapper.
 - **The call.** The request is sealed to the plugin's public key and posted to the pass's
   `forwarderUrl()` + `/call` over a plain `java.net.http.HttpClient` that carries no allme
   credential, follows no redirect and never rewrites the URL. The reply is sealed to an RSA-2048 key

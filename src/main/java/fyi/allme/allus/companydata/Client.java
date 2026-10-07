@@ -1540,7 +1540,7 @@ public final class Client {
                     ? svcPub : flowPersonPublicKey(run, uid, partyPubKeys);
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("for_user_id", uid);
-                entry.put("value", Crypto.encryptForPublicKey(plain, key));
+                entry.put("value", FlowSources.sealedString(Crypto.encryptForPublicKey(plain, key)));
                 values.add(entry);
             }
             Map<String, Object> answer = new LinkedHashMap<>();

@@ -153,9 +153,44 @@ final class FlowSources {
         return post.apply(generatePath, body);
     }
 
-    /** A sealed wrapper as the JSON string an upload body carries. */
+    /** A sealed wrapper as the JSON string a flow-answer or upload body carries. */
     static String sealedString(Object sealedValue) {
         return sealedValue instanceof String s ? s : Json.write(sealedValue);
+    }
+
+    /**
+     * {@code body} with every {@code answers[].values[].value} sent as the sealed wrapper's JSON
+     * string; a value that already is a string, and everything else in the body, stays as it is.
+     * The caller's own structure is not modified.
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> sealAnswerValues(Map<String, Object> body) {
+        if (body == null || !(body.get("answers") instanceof List<?> answers)) {
+            return body;
+        }
+        List<Object> sealedAnswers = new ArrayList<>();
+        for (Object a : answers) {
+            if (a instanceof Map<?, ?> am && am.get("values") instanceof List<?> values) {
+                List<Object> sealedValues = new ArrayList<>();
+                for (Object v : values) {
+                    if (v instanceof Map<?, ?> vm && vm.get("value") != null) {
+                        Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>) vm);
+                        copy.put("value", sealedString(vm.get("value")));
+                        sealedValues.add(copy);
+                    } else {
+                        sealedValues.add(v);
+                    }
+                }
+                Map<String, Object> answerCopy = new LinkedHashMap<>((Map<String, Object>) am);
+                answerCopy.put("values", sealedValues);
+                sealedAnswers.add(answerCopy);
+            } else {
+                sealedAnswers.add(a);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>(body);
+        out.put("answers", sealedAnswers);
+        return out;
     }
 
     /** The {@code file} of an upload's {@code 201 {file}} response. */

@@ -292,7 +292,9 @@ public final class CustomerClient {
     /**
      * Submit this party's turn ({@code body} carries the encrypted per-party answers). It reads the
      * run first and sets {@code source_private: true} on every answer in {@code body.answers} that is
-     * private: a field whose default reaches a private source.
+     * private: a field whose default reaches a private source. Every
+     * {@code answers[].values[].value} goes out as the sealed wrapper's JSON string, whether the caller
+     * passed the map {@link #encryptFlowAnswer} returns or a string.
      */
     @SuppressWarnings("unchecked")
     public Object submitFlowAnswers(String connectionId, String runId, Map<String, Object> body) {
@@ -320,7 +322,8 @@ public final class CustomerClient {
             out = new LinkedHashMap<>(body);
             out.put("answers", marked);
         }
-        return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/answers", out);
+        return http.post(CONN + "/" + connectionId + "/flow-runs/" + runId + "/answers",
+            FlowSources.sealAnswerValues(out));
     }
 
     /**
