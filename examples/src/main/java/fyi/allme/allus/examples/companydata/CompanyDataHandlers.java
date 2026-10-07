@@ -2,6 +2,7 @@ package fyi.allme.allus.examples.companydata;
 
 import com.sun.net.httpserver.HttpExchange;
 
+import fyi.allme.allus.companydata.ApiException;
 import fyi.allme.allus.companydata.BinaryHandle;
 import fyi.allme.allus.companydata.Change;
 import fyi.allme.allus.companydata.Client;
@@ -69,8 +70,8 @@ public final class CompanyDataHandlers {
     private static final String CALL_REQUEST_FIELDS = "Client.requestFields — GET /api/company-data/request-fields: your own request-field catalog, fetched once and cached for the life of the client";
     private static final String CALL_PROCESS_CHANGES = "Client.processChanges — drains the change feed through the crash-safe pump: handler before ack, at-least-once (dedup on Change.id), failures to the local dead-letter store";
     private static final String CALL_CREATE_DOCUMENT = "Client.createDocument — %s";
-    private static final String CALL_LIST_DOCUMENTS = "Client.listDocuments — GET /api/company-data/documents: pages the service's documents so cleanup finds everything it created";
-    private static final String CALL_DELETE_DOCUMENT = "Client.deleteDocument — DELETE /api/company-data/documents/%s";
+    private static final String CALL_DELETE_DOCUMENT = "Client.deleteDocument — DELETE /api/company-data/documents/%s: one document this example created";
+    private static final String CALL_END_DOCUMENT = "Client.updateDocumentStatus — PUT /api/company-data/documents/%s: status ended, because the platform refuses to delete a contract that carries a signature";
     private static final String CALL_WEBHOOK_STARTED = "(webhook run started) — POST /webhook receives each delivery; every poll also drains the change feed as a fallback";
     private static final String CALL_VERIFY_WEBHOOK = "Client.verifyWebhook — checks the delivery's X-Allus-Signature HMAC against the secret configured for its X-Allus-Webhook-Id; a failure answers 401";
     private static final String CALL_PARSE_WEBHOOK = "Client.parseWebhook — turns the verified body into a typed Change, decrypting its value with the service key";
@@ -165,6 +166,10 @@ public final class CompanyDataHandlers {
         }
         if (id.equals(DOCUMENTS)) {
             meta.put("share_code", strOr(in.get("shareCode"), "")); // the per-person / contract target
+            // The saved service the run and the clean-up act as; the record of created documents is kept
+            // across saves, each entry tagged with the service that created it.
+            meta.put("client_id", strOr(in.get("clientId"), ""));
+            meta.put("created_documents", createdDocuments());
             // Preserve presence so doDocuments can distinguish an explicit empty selection from
             // an absent selection; absence means all document types.
             if (in.containsKey("documentTypes")) {
@@ -363,6 +368,7 @@ public final class CompanyDataHandlers {
             }
             calls.add(String.format(CALL_CREATE_DOCUMENT, spec.label));
             Document doc = client.createDocument(spec.req);
+            recordCreatedDocument(doc.id());
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("index", docs.size() + 1);
             row.put("label", spec.label);
@@ -378,10 +384,11 @@ public final class CompanyDataHandlers {
     // ── POST /api/scenarios/{id}/cleanup (companydata:documents only) ──────────
 
     /**
-     * Delete every document the documents scenario has created on this service, so a reused account
-     * can reset between runs — companydata:documents is additive (createDocument mints a new document
-     * each run; nothing deletes a prior run's). Not routed through the generic dispatch: called
-     * directly by the server, the same way enroll is identity-only.
+     * Remove the documents the documents scenario created, so a reused account can reset between runs
+     * — companydata:documents is additive (createDocument mints a new document each run; nothing
+     * deletes a prior run's). Only the ids this example recorded are touched; a document of the
+     * service it did not create is never listed or deleted. Not routed through the generic dispatch:
+     * called directly by the server, the same way enroll is identity-only.
      */
     public void cleanup(HttpExchange ex, String id) throws IOException {
         if (!DOCUMENTS.equals(id)) {
@@ -395,23 +402,79 @@ public final class CompanyDataHandlers {
         dataRun(ex, id, this::doCleanupDocuments);
     }
 
+    /**
+     * Delete each document recorded for the saved service. A contract that carries a signature is refused
+     * with documents.contract_immutable: it is set to status ended instead and reported in {@code ended},
+     * and the clean-up goes on. A document already gone (documents.not_found) needs nothing. Each id leaves
+     * the record as soon as it is dealt with, so a failure part-way leaves only the unprocessed ones.
+     * Documents recorded for another service stay in the record untouched until that service is saved again.
+     */
     private Map<String, Object> doCleanupDocuments(Client client, List<String> calls) {
         int deleted = 0;
-        while (true) {
-            calls.add(CALL_LIST_DOCUMENTS);
-            List<Document> page = client.listDocuments(null, null, 100, 0);
-            if (page.isEmpty()) {
-                break;
+        List<String> ended = new ArrayList<>();
+        String clientId = strOr(rt.readConfigMeta(DOCUMENTS).get("client_id"), "");
+        for (Map<String, Object> rec : createdDocuments()) {
+            if (!clientId.equals(strOr(rec.get("client_id"), ""))) {
+                continue;
             }
-            for (Document doc : page) {
-                calls.add(String.format(CALL_DELETE_DOCUMENT, doc.id()));
-                client.deleteDocument(doc.id());
+            String docId = strOr(rec.get("id"), "");
+            calls.add(String.format(CALL_DELETE_DOCUMENT, docId));
+            try {
+                client.deleteDocument(docId);
                 deleted++;
+            } catch (ApiException e) {
+                if ("documents.contract_immutable".equals(e.errorKey())) {
+                    calls.add(String.format(CALL_END_DOCUMENT, docId));
+                    client.updateDocumentStatus(docId, "ended");
+                    ended.add(docId);
+                } else if (!"documents.not_found".equals(e.errorKey())) {
+                    throw e;
+                }
+                // not_found: already removed elsewhere — nothing left to clean up
             }
+            forgetCreatedDocument(docId, clientId);
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("deleted", deleted);
+        out.put("ended", ended);
         return out;
+    }
+
+    /** The documents this example created ({id, client_id} each), kept in the documents scenario's setup sidecar. */
+    private List<Map<String, Object>> createdDocuments() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rt.readConfigMeta(DOCUMENTS).get("created_documents") instanceof List<?> raw) {
+            for (Object o : raw) {
+                if (o instanceof Map<?, ?> m) {
+                    Map<String, Object> rec = new LinkedHashMap<>();
+                    rec.put("id", strOr(m.get("id"), ""));
+                    rec.put("client_id", strOr(m.get("client_id"), ""));
+                    out.add(rec);
+                }
+            }
+        }
+        return out;
+    }
+
+    private void recordCreatedDocument(String docId) {
+        List<Map<String, Object>> all = createdDocuments();
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("id", docId);
+        rec.put("client_id", strOr(rt.readConfigMeta(DOCUMENTS).get("client_id"), ""));
+        all.add(rec);
+        writeCreatedDocuments(all);
+    }
+
+    private void forgetCreatedDocument(String docId, String clientId) {
+        List<Map<String, Object>> all = createdDocuments();
+        all.removeIf(r -> docId.equals(r.get("id")) && clientId.equals(r.get("client_id")));
+        writeCreatedDocuments(all);
+    }
+
+    private void writeCreatedDocuments(List<Map<String, Object>> all) {
+        Map<String, Object> meta = rt.readConfigMeta(DOCUMENTS);
+        meta.put("created_documents", all);
+        rt.writeConfigMeta(DOCUMENTS, meta);
     }
 
     /** The metadata block for the acceptance-contract doc (verbatim from apitests/php/documents.php). */
