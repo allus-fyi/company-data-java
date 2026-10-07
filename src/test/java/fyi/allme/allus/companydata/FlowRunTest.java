@@ -146,16 +146,29 @@ class FlowRunTest {
         };
     }
 
-    private static BiFunction<String, Map<String, String>, Response> keyGet(String spki) {
-        return (url, params) -> {
-            if (url.endsWith("/company-data/connections/csc-1")) {
-                return FakeTransport.json(200, "{\"connection_id\":\"csc-1\",\"share_code\":\"ABC123\"}");
+    /**
+     * Answers the by-user-id key fetch (POST /api/keys/batch) with spki for the person party and
+     * hands every other write to next.
+     */
+    private static ClientTest.RoutingTransport.WriteRouter keysBatch(
+        String spki, ClientTest.RoutingTransport.WriteRouter next) {
+        return (method, url, jsonBody, data) -> {
+            if (url.endsWith("/api/keys/batch")) {
+                return FakeTransport.json(200,
+                    "{\"" + PERSON_UID + "\":{\"public_key\":\"" + spki + "\",\"recipient_has_key\":true}}");
             }
-            if (url.endsWith("/api/keys/ABC123")) {
-                return FakeTransport.json(200, "{\"public_key\":\"" + spki + "\"}");
-            }
-            throw new AssertionError("unexpected GET " + url);
+            return next.apply(method, url, jsonBody, data);
         };
+    }
+
+    /** A sealed value travels as the wrapper's JSON string; this reads it back to the wrapper. */
+    private static Object sealedWrapper(Object value) {
+        assertTrue(value instanceof String, "value is not a wrapper JSON string: " + value);
+        try {
+            return Json.parse((String) value);
+        } catch (Exception e) {
+            throw new AssertionError("value is not a wrapper JSON string: " + value, e);
+        }
     }
 
     // ── trigger / list / get ──────────────────────────────────────────────────────
@@ -220,12 +233,12 @@ class FlowRunTest {
     void submitFansOutAndRoutesFallthrough(@TempDir Path tmp) throws Exception {
         String spki = TestCrypto.spkiB64(publicKey);
         Object[] captured = new Object[2];
-        ClientTest.RoutingTransport t = new ClientTest.RoutingTransport(keyGet(spki),
-            (method, url, jsonBody, data) -> {
+        ClientTest.RoutingTransport t = new ClientTest.RoutingTransport(noGet(),
+            keysBatch(spki, (method, url, jsonBody, data) -> {
                 captured[0] = url;
                 captured[1] = jsonBody;
                 return FakeTransport.json(200, json(runObj("awaiting_person", "n2", null, null, "data_only", null)));
-            });
+            }));
         Client client = new Client(config(tmp), t);
         FlowRun run = FlowRun.fromApi(runObj());
         FlowRun out = client.submitFlowAnswers(run, Map.of("company_name", "ACME BV"));
@@ -240,12 +253,12 @@ class FlowRunTest {
             .collect(Collectors.toSet());
         assertEquals(Set.of(COMPANY_UID, PERSON_UID), forUsers);
         for (Object v : values) {
-            assertTrue(isEncWrapper(((Map<String, Object>) v).get("value")));
+            assertTrue(isEncWrapper(sealedWrapper(((Map<String, Object>) v).get("value"))));
         }
         // company copy round-trips with the service private key
         Object companyVal = values.stream()
             .filter(v -> COMPANY_UID.equals(((Map<String, Object>) v).get("for_user_id")))
-            .map(v -> ((Map<String, Object>) v).get("value")).findFirst().orElseThrow();
+            .map(v -> sealedWrapper(((Map<String, Object>) v).get("value"))).findFirst().orElseThrow();
         assertEquals("ACME BV", Crypto.decrypt(Wrapper.of(companyVal), privateKey));
         // local routing: no 'tier' → fallthrough to n2
         assertEquals("n2", body.get("next_node"));
@@ -259,11 +272,11 @@ class FlowRunTest {
     void submitRoutesGuardedEdge(@TempDir Path tmp) throws Exception {
         String spki = TestCrypto.spkiB64(publicKey);
         Object[] captured = new Object[1];
-        ClientTest.RoutingTransport t = new ClientTest.RoutingTransport(keyGet(spki),
-            (method, url, jsonBody, data) -> {
+        ClientTest.RoutingTransport t = new ClientTest.RoutingTransport(noGet(),
+            keysBatch(spki, (method, url, jsonBody, data) -> {
                 captured[0] = jsonBody;
                 return FakeTransport.json(200, json(runObj("awaiting_person", "n_end", null, null, "data_only", null)));
-            });
+            }));
         Client client = new Client(config(tmp), t);
         FlowRun run = FlowRun.fromApi(runObj());
         client.submitFlowAnswers(run, Map.of("tier", "vip"));
@@ -344,22 +357,16 @@ class FlowRunTest {
                     String docId = posts.isEmpty() ? null : "doc-9";
                     return FakeTransport.json(200, json(runObj(status, "n1", null, single, "document", docId)));
                 }
-                if (url.endsWith("/company-data/connections/csc-1")) {
-                    return FakeTransport.json(200, "{\"connection_id\":\"csc-1\",\"share_code\":\"ABC123\"}");
-                }
-                if (url.endsWith("/api/keys/ABC123")) {
-                    return FakeTransport.json(200, "{\"public_key\":\"" + spki + "\"}");
-                }
                 throw new AssertionError("unexpected GET " + url);
             },
-            (method, url, jsonBody, data) -> {
+            keysBatch(spki, (method, url, jsonBody, data) -> {
                 posts.add(url);
                 if (url.endsWith("/answers")) {
                     return FakeTransport.json(200, json(runObj("generating", "n1", null, single, "document", null)));
                 }
                 assertTrue(url.endsWith("/generate"), "unexpected write " + url);
                 return FakeTransport.json(200, GENERATED);
-            });
+            }));
         Client client = new Client(config(tmp), t);
         FlowRun run = client.processFlowRun("run-1", (node, answers) -> Map.of("company_name", "ACME BV"));
         assertTrue(posts.stream().anyMatch(p -> p.endsWith("/answers")));
