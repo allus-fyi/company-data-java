@@ -228,6 +228,16 @@ public final class Http {
         return request("POST", path, null, jsonBody, null, null, false, false);
     }
 
+    /**
+     * POST {@code path} with a JSON body → the whole 2xx {@link Transport.Response}, with no parse —
+     * the counterpart of {@link #getResponse} for a route that answers JSON whatever the configured
+     * format is; the caller parses it with {@link #parseBodyAsJson}. Auth/refresh/retry and error
+     * mapping are identical to {@link #post(String, Object)}.
+     */
+    public Transport.Response postResponse(String path, Object jsonBody) {
+        return (Transport.Response) request("POST", path, null, jsonBody, null, null, false, true);
+    }
+
     /** POST {@code path} with a raw byte body + content type → parsed body. */
     public Object post(String path, byte[] rawBody, String contentType) {
         return request("POST", path, null, null, rawBody, contentType, false, false);

@@ -220,6 +220,23 @@ public final class Crypto {
     }
 
     /**
+     * One user's public key through {@code POST /api/keys/batch}, or null when the user has none.
+     *
+     * <p>The route answers JSON whatever the client's configured format is, so the body is parsed
+     * as JSON. The answer is a flat map {@code {user_id: {public_key, public_key_sha256,
+     * recipient_has_key}}} carrying every requested id; a user without a key has {@code public_key}
+     * null. {@code http} is the client's own HTTP layer, so auth, rebase and retry are its own.
+     */
+    static RSAPublicKey fetchBatchPublicKey(fyi.allme.allus.companydata.internal.Http http, String userId) {
+        Object body = http.parseBodyAsJson(http.postResponse("/api/keys/batch", Map.of("user_ids", java.util.List.of(userId))));
+        Object entry = (body instanceof Map<?, ?> m) ? m.get(userId) : null;
+        if (entry instanceof Map<?, ?> e) {
+            entry = e.get("public_key");
+        }
+        return (entry instanceof String s && !s.isEmpty()) ? loadPublicKey(s) : null;
+    }
+
+    /**
      * Load a base64 SPKI/DER public key (the platform's {@code GET /api/keys}
      * {@code public_key}) into an RSA public key.
      *

@@ -687,12 +687,7 @@ public final class CustomerClient {
             }
             gen = pubKeyGen.getOrDefault(userId, 0L);
         }
-        Object body = http.post(KEYS + "/batch", Map.of("user_ids", List.of(userId)));
-        String spki = null;
-        if (body instanceof Map<?, ?> m && m.get("keys") instanceof Map<?, ?> keys && keys.get(userId) != null) {
-            spki = String.valueOf(keys.get(userId));
-        }
-        RSAPublicKey key = (spki != null && !spki.isEmpty()) ? Crypto.loadPublicKey(spki) : null;
+        RSAPublicKey key = Crypto.fetchBatchPublicKey(http, userId);
         synchronized (pubKeyLock) {
             // Store ONLY if no invalidation happened while the request was in flight.
             if (pubKeyGen.getOrDefault(userId, 0L) == gen) {

@@ -128,6 +128,14 @@ public final class Client {
      */
     private final Map<String, Long> pubkeyGen = new LinkedHashMap<>();
 
+    /**
+     * Run-party public keys, by the party's user id, guarded by {@link #pubkeyLock}. A rotation
+     * signal names a share code, which does not say which user id it belongs to, so
+     * {@link #invalidatePublicKey} drops every entry and bumps one generation for the whole map.
+     */
+    private final Map<String, java.security.interfaces.RSAPublicKey> userPubkeyCache = new LinkedHashMap<>();
+    private long userPubkeyGen = 0L;
+
     // The service RSA public key (public half of the loaded private key), derived once.
     private java.security.interfaces.RSAPublicKey servicePublicKey;
 
@@ -559,6 +567,8 @@ public final class Client {
             pubkeyCache.remove(shareCode);
             // Any fetch already in flight must not write its stale result back.
             pubkeyGen.merge(shareCode, 1L, Long::sum);
+            userPubkeyCache.clear();
+            userPubkeyGen++;
         }
     }
 
@@ -658,6 +668,29 @@ public final class Client {
             // Store ONLY if no invalidation happened while the request was in flight.
             if (pubkeyGen.getOrDefault(shareCode, 0L) == gen) {
                 pubkeyCache.put(shareCode, key);
+            }
+        }
+        return key;
+    }
+
+    /** Fetch + cache a run party's RSA public key by its user id ({@code POST /api/keys/batch}). */
+    private java.security.interfaces.RSAPublicKey userPublicKey(String userId) {
+        java.security.interfaces.RSAPublicKey cached;
+        long gen;
+        synchronized (pubkeyLock) {
+            cached = userPubkeyCache.get(userId);
+            gen = userPubkeyGen;
+        }
+        if (cached != null) {
+            return cached;
+        }
+        java.security.interfaces.RSAPublicKey key = Crypto.fetchBatchPublicKey(http, userId);
+        if (key == null) {
+            throw new ApiException(0, "keys.not_found", "no public key for user " + userId);
+        }
+        synchronized (pubkeyLock) {
+            if (userPubkeyGen == gen) {
+                userPubkeyCache.put(userId, key);
             }
         }
         return key;
@@ -1429,11 +1462,9 @@ public final class Client {
 
     /**
      * Resolve a person party's RSA public key for per-party answer encryption. Prefers a
-     * caller-supplied key, else resolves the person's share_code from the run's connection →
-     * {@code GET /api/keys/{code}}.
-     *
-     * <p>Integration gap: the run payload exposes neither person public keys nor per-binding share
-     * codes, so the SDK resolves via the connection. Supply {@code partyPubKeys} to skip the lookup.
+     * caller-supplied key, else fetches the party's key by its user id. A run's
+     * {@code connectionId} names the company-connection pair, not a service link, so it is never
+     * used to look the party up. Supply {@code partyPubKeys} to skip the lookup.
      */
     private java.security.interfaces.RSAPublicKey flowPersonPublicKey(
             FlowRun run, String uid, Map<String, java.security.interfaces.RSAPublicKey> partyPubKeys) {
@@ -1441,8 +1472,7 @@ public final class Client {
         if (supplied != null) {
             return supplied;
         }
-        String sc = resolveShareCode(run.connectionId(), uid);
-        return recipientPublicKey(sc);
+        return userPublicKey(uid);
     }
 
     /**
@@ -1460,7 +1490,7 @@ public final class Client {
 
     /**
      * As {@link #submitFlowAnswers(FlowRun, Map)}, but {@code partyPubKeys} supplies person-party
-     * public keys (by user_id) to skip the share_code → {@code /api/keys} resolution.
+     * public keys (by user_id) to skip the by-user-id key fetch ({@code POST /api/keys/batch}).
      */
     public FlowRun submitFlowAnswers(
             FlowRun run, Map<String, Object> fill,
