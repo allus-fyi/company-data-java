@@ -50,10 +50,10 @@ final class PluginFlowParty {
 
     /**
      * The plain transport the forwarder is reached over: no bearer token or other allme
-     * credential, no base-URL rewriting, and no redirect followed.
+     * credential, no base-URL rewriting, no redirect followed, and no request sent again.
      */
     static Transport newTransport() {
-        return new JdkTransport(HttpClient.newBuilder()
+        return JdkTransport.withoutResend(HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NEVER)
             .build());

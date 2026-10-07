@@ -1346,6 +1346,20 @@ does when the connection drops; a `Transport` of your own keeps its own limit, a
 a `java.net.http.HttpClient` you hand to `JdkTransport` is given 60 seconds per
 request. A request given up may still have completed on the platform.
 
+**A connection closed before the answer is tried once more.** When the platform
+closes the connection before the answer's headers arrive, `JdkTransport` — the
+SDK's own transport, and one you hand a `java.net.http.HttpClient` — sends the
+request once more and reports only the second failure, for every method but GET
+and HEAD, which `HttpClient` already replays itself; a `Transport` of your own
+keeps its own behaviour. A request is never sent again once its response headers
+have arrived, after the 45 seconds ran out, or when the connection could not be
+opened. The SDK cannot tell a reused connection from a new one, so a first
+request on a new connection closed this way is sent again too. Nor can it tell
+no answer at all from part of a status line or headers, so a write the platform
+received and began to answer before the connection dropped is delivered twice. A
+request the platform acted on before its connection died with no answer at all
+runs twice.
+
 **503 `db.writes_paused` — saving is paused, retry.** While the platform cannot
 complete a save in every region, any call that is not a GET, the change-feed
 drains (`processChanges`, `drainBatch`) and `OAuthClient.pollResult` can throw
