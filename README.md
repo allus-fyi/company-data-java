@@ -253,6 +253,21 @@ Fetch one connection by its connection id (`GET /api/company-data/connections/{i
 * **Returns:** one `Connection`. Note: this endpoint returns `{connection_id, user_id, values}` and **no** `display_name`/`connected_at`, so those identity fields are `null` here (the list endpoint carries them).
 * **Throws:** `AuthException`, `ApiException` (404 if unknown), `DecryptException`, `RateLimitException`.
 
+### `deleteConnection(connectionId)`
+
+```java
+void deleteConnection(String connectionId)
+```
+
+End one of this service's connections (`DELETE /api/company-data/connections/{id}`). It leaves exactly the state the customer's own disconnect leaves: the link, the answers and copies held through it and the pair's messages on this service are deleted; the company connection, documents, signatures and flow runs stay. The customer is told by the platform, and `connection_deleted` reaches your change feed and webhooks. A customer whose account was deleted can still be disconnected. Reconnecting stays possible.
+
+* **Returns:** nothing.
+* **Throws:** `AuthException`, `ApiException`, `RateLimitException`; refusals are `404` `company_data.connection_not_found` (an id that is not a connection of this service) and `409` `company_connections.active_contract` (the customer holds an active agreement or subscription on this service).
+
+```java
+client.deleteConnection(connId);
+```
+
 ### `identity()`
 
 ```java
