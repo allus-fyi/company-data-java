@@ -30,7 +30,7 @@ import java.util.stream.Stream;
  *   <li>{@code config/{sid}.json}      — the canonical SDK config file a scenario runs OFF (written by
  *       {@code POST /api/scenarios/{id}/config} from the browser settings; NOT TTL-swept)</li>
  *   <li>{@code config/{sid}.meta.json} — demo-only run parameters that are not SDK Config fields
- *       (authorize_base / claims / share_code / context / flow_id / connection_id / fixture / webhook_id)</li>
+ *       (claims / share_code / context / flow_id / connection_id / fixture / webhook_id)</li>
  *   <li>{@code config/keys/<sha1>.pem} — the private-key file(s) a config references by path (0600)</li>
  *   <li>{@code runs/{runId}.json}      — one run's PKCE/state/nonce or accumulating result + calls</li>
  *   <li>{@code webhook-route.json}     — the SINGLE active company-data webhook run {webhookId, runId}</li>

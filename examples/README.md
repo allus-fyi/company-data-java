@@ -134,15 +134,6 @@ wait with `timeout=2` (`pollResult` / `waitForResult`); the SDK's logical "not
 completed within 2s" timeout leaves the run pending, a real transport failure
 fails it.
 
-> **Java-specific note — authorize base.** The Java SDK's public `OAuthClient`
-> surface (`OAuthClient.fromConfig` / `new OAuthClient(config)`) uses the SDK's
-> **default authorize base** (`https://web.allme.fyi/auth`, the deployed
-> platform) — the authorize-base override is a package-private constructor, so a
-> *non-default* authorize base entered in the browser is **not** applied by this
-> example. The `api_url` (which drives OIDC discovery, the token exchange, and the
-> 2FA/connections reads) IS honoured from the config file. Running against the
-> deployed default therefore needs no change.
-
 ### flow — run a contract flow (`flow:run`)
 
 Trigger a flow run and drive the company party through it with type-checked step

@@ -44,12 +44,12 @@ public final class OAuthClient {
     private final LongConsumer sleep;
 
     public OAuthClient(Config config) {
-        this(config, new JdkTransport(), DEFAULT_AUTHORIZE_URL, OAuthClient::sleepMillis);
+        this(config, new JdkTransport(), authorizeBaseOf(config), OAuthClient::sleepMillis);
     }
 
     /** Test/advanced seam: inject a transport (and optionally the authorize base + sleeper). */
     OAuthClient(Config config, Transport transport) {
-        this(config, transport, DEFAULT_AUTHORIZE_URL, OAuthClient::sleepMillis);
+        this(config, transport, authorizeBaseOf(config), OAuthClient::sleepMillis);
     }
 
     OAuthClient(Config config, Transport transport, String authorizeBase, LongConsumer sleep) {
@@ -62,6 +62,12 @@ public final class OAuthClient {
         this.authorizeBase = authorizeBase;
         this.apiUrl = config.apiUrl().replaceAll("/+$", "");
         this.sleep = sleep;
+    }
+
+    /** The config's {@code authorize_url}, else the live sign-in address. */
+    private static String authorizeBaseOf(Config config) {
+        String configured = config.authorizeUrl();
+        return configured == null || configured.isEmpty() ? DEFAULT_AUTHORIZE_URL : configured;
     }
 
     /** Build from an idw-role JSON config file. */

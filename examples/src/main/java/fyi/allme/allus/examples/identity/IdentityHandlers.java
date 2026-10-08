@@ -90,7 +90,6 @@ public final class IdentityHandlers {
     private static final Set<Integer> CLAIM_VALUE_SCENARIOS = Set.of(3, 4, 5);
 
     private static final String DEFAULT_API_URL = "https://api.allme.fyi";
-    private static final String DEFAULT_AUTHORIZE_BASE = OAuthClient.DEFAULT_AUTHORIZE_URL; // web.allme.fyi/auth
 
     /**
      * Refusal when the request carries no Host header, so the browser's origin is unknown. There is
@@ -118,7 +117,7 @@ public final class IdentityHandlers {
      * changes: the panel is headed "What just happened", and a list that no longer matches the code is
      * worse than a short one.
      */
-    private static final String CALL_IDW_BUILD = "OAuthClient.fromConfig — builds the RP client from the saved config file: client id, secret and the registered redirect URI";
+    private static final String CALL_IDW_BUILD = "OAuthClient.fromConfig — builds the RP client from the saved config file: client id, secret, the registered redirect URI and the sign-in address";
     private static final String CALL_AUTH_SIGNIN = "OAuthClient.authorizeUrl — the consent URL the person is sent to (mode signin, response_mode redirect, PKCE S256, state = this run id)";
     private static final String CALL_AUTH_SIGNIN_DETACHED = "OAuthClient.authorizeUrl — the sign-in URL behind the link + QR (mode signin, response_mode detached, PKCE S256, state = this run id)";
     private static final String CALL_AUTH_ONE_TIME = "OAuthClient.authorizeUrl — the consent URL the person is sent to (mode one_time, claims email + phone, PKCE S256, state = this run id)";
@@ -186,6 +185,10 @@ public final class IdentityHandlers {
         if (!secret.isEmpty()) {
             cfg.put("oauth_client_secret", secret);
         }
+        String authorizeUrl = strOr(in.get("authorizeBase"), "");
+        if (!authorizeUrl.isEmpty() && OAUTH_URL_SCENARIOS.contains(id)) {
+            cfg.put("authorize_url", authorizeUrl);
+        }
 
         // Any scenario whose run can carry claim values (CLAIM_VALUE_SCENARIOS) needs the OAuth app
         // private key to decrypt them.
@@ -215,10 +218,6 @@ public final class IdentityHandlers {
 
         // Demo-only run parameters (NOT SDK Config fields) → meta sidecar.
         Map<String, Object> meta = new LinkedHashMap<>();
-        if (OAUTH_URL_SCENARIOS.contains(id)) {
-            String base = strOr(in.get("authorizeBase"), "");
-            meta.put("authorize_base", base.isEmpty() ? DEFAULT_AUTHORIZE_BASE : base);
-        }
         if (id == 3) {
             meta.put("claims", claims(in));
         }
@@ -595,11 +594,9 @@ public final class IdentityHandlers {
 
     /**
      * Build the OAuth client OFF the scenario's config file via the idw file constructor
-     * ({@link OAuthClient#fromConfig}). NOTE: the Java SDK's public OAuth surface uses the SDK's
-     * default (deployed) authorize base — the acceptance path. A non-default authorize base is not
-     * settable through the public constructor, so the local-stack authorize base is not applied here
-     * (documented in the README); {@code api_url} (which drives OIDC discovery and the token exchange)
-     * IS honoured from the config file.
+     * ({@link OAuthClient#fromConfig}). The sign-in address is the file's {@code authorize_url} when
+     * present, else the SDK's live default; {@code api_url} (which drives OIDC discovery and the token
+     * exchange) is honoured from the same file.
      */
     private OAuthClient oauthClientFor(int id) {
         return OAuthClient.fromConfig(rt.configPathFor(key(id)).toString());

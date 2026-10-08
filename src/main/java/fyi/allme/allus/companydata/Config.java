@@ -49,6 +49,7 @@ public final class Config {
     private final String oauthClientSecret;
     private final String oauthPrivateKey;
     private final String oauthKeyPassphrase;
+    private final String authorizeUrl;         // optional — the hosted sign-in page; null means the live address
     private final Map<String, String> webhooks; // webhook id -> HMAC secret
 
     // OPTIONAL — alternative webhook auth methods, mirroring the platform's
@@ -68,7 +69,7 @@ public final class Config {
                    String customerClientId, String customerClientSecret,
                    String accountPrivateKey, String accountPassphrase,
                    String oauthClientId, String oauthRedirectUri, String oauthClientSecret,
-                   String oauthPrivateKey, String oauthKeyPassphrase,
+                   String oauthPrivateKey, String oauthKeyPassphrase, String authorizeUrl,
                    Map<String, String> webhooks,
                    String webhookBearerToken, Map<String, String> webhookBasic,
                    Map<String, String> webhookHeader, boolean webhookAuthNone,
@@ -87,6 +88,7 @@ public final class Config {
         this.oauthClientSecret = oauthClientSecret;
         this.oauthPrivateKey = oauthPrivateKey;
         this.oauthKeyPassphrase = oauthKeyPassphrase;
+        this.authorizeUrl = authorizeUrl;
         this.webhooks = webhooks;
         this.webhookBearerToken = webhookBearerToken;
         this.webhookBasic = webhookBasic;
@@ -201,6 +203,10 @@ public final class Config {
         String oauthClientSecret = pick(envOf(env, "ALLUS_OAUTH_CLIENT_SECRET"), data.get("oauth_client_secret"));
         String oauthPrivateKey = pick(envOf(env, "ALLUS_OAUTH_PRIVATE_KEY"), data.get("oauth_private_key"));
         String oauthKeyPassphrase = pick(envOf(env, "ALLUS_OAUTH_KEY_PASSPHRASE"), data.get("oauth_key_passphrase"));
+        String authorizeUrl = pick(envOf(env, "ALLUS_AUTHORIZE_URL"), data.get("authorize_url"));
+        if (authorizeUrl != null && authorizeUrl.isEmpty()) {
+            authorizeUrl = null;
+        }
         String cacheDir = pick(envOf(env, "ALLUS_CACHE_DIR"), data.get("cache_dir"));
         String format = pick(envOf(env, "ALLUS_FORMAT"), data.get("format"));
 
@@ -330,7 +336,7 @@ public final class Config {
         return new Config(apiUrl, clientId, clientSecret, servicePrivateKey, keyPassphrase,
             customerClientId, customerClientSecret,
             accountPrivateKey, accountPassphrase,
-            oauthClientId, oauthRedirectUri, oauthClientSecret, oauthPrivateKey, oauthKeyPassphrase,
+            oauthClientId, oauthRedirectUri, oauthClientSecret, oauthPrivateKey, oauthKeyPassphrase, authorizeUrl,
             webhooks,
             webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
             cacheDir, format);
@@ -399,12 +405,17 @@ public final class Config {
         return oauthKeyPassphrase;
     }
 
+    /** The configured hosted sign-in page, or {@code null} for the live address. */
+    public String authorizeUrl() {
+        return authorizeUrl;
+    }
+
     /** An http-facing copy whose clientId/secret are the customer acct_* pair. */
     Config toCustomerHttpConfig() {
         return new Config(apiUrl, customerClientId, customerClientSecret, null, null,
             customerClientId, customerClientSecret,
             accountPrivateKey, accountPassphrase,
-            oauthClientId, oauthRedirectUri, oauthClientSecret, oauthPrivateKey, oauthKeyPassphrase,
+            oauthClientId, oauthRedirectUri, oauthClientSecret, oauthPrivateKey, oauthKeyPassphrase, authorizeUrl,
             webhooks,
             webhookBearerToken, webhookBasic, webhookHeader, webhookAuthNone,
             cacheDir, format);

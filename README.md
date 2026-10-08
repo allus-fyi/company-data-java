@@ -1476,6 +1476,10 @@ OAuthClient.SignInResult res = oauth.completeSignIn(code, verifier); // res.user
 Modes: `signin` | `one_time` (claim values decrypted for you) | `connect` |
 `2fa_enroll` (opt a person into 2FA — see below). `pollResult(state, timeout, interval)` drives the detached mode.
 
+**The sign-in address** is one optional setting of the same config: `authorize_url` (env `ALLUS_AUTHORIZE_URL`, read as
+`Config.authorizeUrl()`). `authorizeUrl()` builds the button link on it, and on the live address
+`https://web.allme.fyi/auth` when it is absent.
+
 **#498 — a claim IS a request field.** You describe what you need and the **person** picks which of their
 own fields answers it; you never name a field. A claim carries a mandatory unique `name` (everything that
 comes back is keyed by it — `values`, `valuesCipher`, `attestations`, and their stored choice for a repeat
