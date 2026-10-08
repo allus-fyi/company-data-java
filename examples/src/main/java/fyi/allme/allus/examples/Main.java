@@ -32,7 +32,7 @@ import java.util.stream.Stream;
  *
  * <p>Steps:
  * <ol>
- *   <li>wipe {@code .runtime/} (fresh state each boot)</li>
+ *   <li>wipe the runtime state directory ({@code .runtime/}, or {@code EXAMPLE_RUNTIME_DIR}; fresh state each boot)</li>
  *   <li>on a missing/stale bundle: fetch the pinned frontend release ({@code frontend.lock}), VERIFY
  *       its sha256, unpack to {@code .frontend/<tag>/} (a present, verified bundle is a cache hit)</li>
  *   <li>assert the bundle's {@code contract.json} version == the backend's implemented contractVersion</li>

@@ -62,8 +62,16 @@ public final class Runtime {
     /** The setup snapshot POSTed to {@code /api/state} — opaque bytes, never parsed here. */
     public final Path statePath;
 
+    private final Path baseDir;
+
+    /**
+     * Runtime state lives in {@code .runtime} under {@code baseDir}, or in the directory the
+     * {@code EXAMPLE_RUNTIME_DIR} environment variable names when it is set and non-empty.
+     */
     public Runtime(Path baseDir) {
-        this.runtimeDir = baseDir.resolve(".runtime");
+        this.baseDir = baseDir;
+        String env = System.getenv("EXAMPLE_RUNTIME_DIR");
+        this.runtimeDir = env == null || env.isEmpty() ? baseDir.resolve(".runtime") : Path.of(env).toAbsolutePath();
         this.runsDir = runtimeDir.resolve("runs");
         this.configDir = runtimeDir.resolve("config");
         this.configKeysDir = configDir.resolve("keys");
@@ -137,12 +145,15 @@ public final class Runtime {
 
     /**
      * Write a scenario's canonical SDK config file (config endpoint). Atomic write-temp + rename.
-     * Returns the RELATIVE path (for display/inspection in the setup panel).
+     * Returns the path for display/inspection in the setup panel: relative to the example directory
+     * under the default runtime directory, absolute under {@code EXAMPLE_RUNTIME_DIR}.
      */
     public String writeConfig(String scenarioId, Map<String, Object> config) {
         ensureDirs();
         atomicWrite(configPathFor(scenarioId), Json.writeBytes(config), null);
-        return ".runtime/config/" + sid(scenarioId) + ".json";
+        return runtimeDir.equals(baseDir.resolve(".runtime"))
+                ? ".runtime/config/" + sid(scenarioId) + ".json"
+                : configPathFor(scenarioId).toString();
     }
 
     public void writeConfigMeta(String scenarioId, Map<String, Object> meta) {
