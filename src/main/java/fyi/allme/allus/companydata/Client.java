@@ -1388,15 +1388,16 @@ public final class Client {
     }
 
     /**
-     * A completed run's DECRYPTED answers as {@code {slug: plaintext}}. Decrypts the
-     * company's service-key answer copies of an already-fetched run — the public accessor for a
-     * finished run's answers, since the private {@code decryptRunAnswers} it wraps is otherwise
-     * reached only inside {@link #processFlowRun}, which returns an already-completed run untouched.
-     * (Java has no {@code FlowRun|String} union; fetch the run with {@link #flowRun} first, then
-     * pass it here.)
+     * A completed run's DECRYPTED answers → {@link FlowRunAnswers}. Decrypts the company's
+     * service-key answer copies of an already-fetched run — the public accessor for a finished
+     * run's answers, which {@link #processFlowRun} returns untouched. (Java has no
+     * {@code FlowRun|String} union; fetch the run with {@link #flowRun} first, then pass it here.)
+     *
+     * <p>An answer the service key cannot open never fails the call: it is left out of
+     * {@link FlowRunAnswers#answers()} and its slug is listed in {@link FlowRunAnswers#unreadable()}.
      */
-    public Map<String, Object> flowRunAnswers(FlowRun run) {
-        return decryptRunAnswers(run);
+    public FlowRunAnswers flowRunAnswers(FlowRun run) {
+        return openRunAnswers(run, true);
     }
 
     /**
@@ -1447,11 +1448,23 @@ public final class Client {
     }
 
     /**
-     * Decrypt the company's service-key answer copies → {@code {slug: plaintext}}. Only the rows
-     * whose {@code for_user_id} is the company's bound user_id are decryptable with the service key.
+     * Decrypt the company's service-key answer copies → {@code {slug: plaintext}}, failing on the
+     * first answer that does not open. Routing and generation read the run's whole answer set, so a
+     * missing answer there would route or fill on a value that is not the run's.
      */
     private Map<String, Object> decryptRunAnswers(FlowRun run) {
+        return openRunAnswers(run, false).answers();
+    }
+
+    /**
+     * Open the company's service-key answer copies. Only the rows whose {@code for_user_id} is the
+     * company's bound user_id are decryptable with the service key. With {@code skipUnreadable} an
+     * answer that does not open ({@link DecryptException}) is left out and its slug listed in
+     * {@link FlowRunAnswers#unreadable()}; without it the exception propagates.
+     */
+    private FlowRunAnswers openRunAnswers(FlowRun run, boolean skipUnreadable) {
         Map<String, Object> out = new LinkedHashMap<>();
+        List<String> unreadable = new ArrayList<>();
         String serviceUid = run.serviceUserId();
         for (Map<String, Object> row : run.answers()) {
             Object forUser = row.get("for_user_id");
@@ -1469,9 +1482,16 @@ public final class Client {
                 out.put(String.valueOf(slug), FlowSources.fileRefMarker(value));
                 continue;
             }
-            out.put(String.valueOf(slug), decryptValue(value));
+            try {
+                out.put(String.valueOf(slug), decryptValue(value));
+            } catch (DecryptException exc) {
+                if (!skipUnreadable) {
+                    throw exc;
+                }
+                unreadable.add(String.valueOf(slug));
+            }
         }
-        return out;
+        return new FlowRunAnswers(out, unreadable);
     }
 
     /**

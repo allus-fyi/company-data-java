@@ -253,6 +253,7 @@ public final class CompanyDataHandlers {
                 row.put("value", stringifyValue(v.value()));
                 row.put("live", v.live());
                 row.put("at", iso(v.updatedAt()));
+                row.put("unreadable", v.unreadable());
                 values.add(row);
             }
             Map<String, Object> c = new LinkedHashMap<>();

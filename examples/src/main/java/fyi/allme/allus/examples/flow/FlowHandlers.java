@@ -402,7 +402,7 @@ public final class FlowHandlers {
     private Map<String, Object> complete(Map<String, Object> run, Client client, FlowRun flowRun,
                                          String flowRunId) {
         run.put("calls", addCall(run.get("calls"), CALL_ANSWERS));
-        Map<String, Object> answers = client.flowRunAnswers(flowRun);
+        Map<String, Object> answers = client.flowRunAnswers(flowRun).answers();
         Map<String, Object> ciphers = ownCipherBySlug(flowRun);
         List<Map<String, Object>> answersOut = new ArrayList<>();
         for (Map.Entry<String, Object> e : answers.entrySet()) {

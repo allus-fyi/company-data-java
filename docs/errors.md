@@ -176,7 +176,9 @@ reason. If you catch it, wait `e.retryAfter()` (or a default) before retrying.
 | `Client.fromConfig` / `fromEnv` / `new Client(...)` | `ConfigException` |
 | Token / any call (auth) | `AuthException` |
 | `connections`, `connection`, `requestFields`, `logs`, pump drains | `ApiException`, `RateLimitException` |
-| Value access / `BinaryHandle.bytes()` / pump delivery | `DecryptException`; `BinaryHandle.bytes()` also `ApiException` (it does the deferred GET — 410 `company_data.file_expired` when a frozen answer's retention has elapsed) |
+| `BinaryHandle.bytes()` / pump delivery / `parseWebhook` / flow-run routing and generation | `DecryptException`; `BinaryHandle.bytes()` also `ApiException` (it does the deferred GET — 410 `company_data.file_expired` when a frozen answer's retention has elapsed) |
+| `connections`, `connection` (a value that cannot be opened) | none — the `Value` reads `unreadable()` |
+| `flowRunAnswers` (an answer that cannot be opened) | none — its slug is listed in `FlowRunAnswers.unreadable()` |
 | `verifyWebhook` / `parseWebhook` / `handleWebhook` | `WebhookException` (`verifyWebhook` returns `false` rather than throwing on a bad signature) |
 
 ## Example
@@ -196,7 +198,7 @@ try {
 } catch (RateLimitException e) {
     sleep(e.retryAfter() != null ? e.retryAfter() : 60);
 } catch (DecryptException e) {
-    // wrong service key or corrupt data
+    // a binary value's bytes could not be opened (wrong service key or corrupt data)
 } catch (ApiException e) {
     log(e.status(), e.errorKey(), e.apiMessage());
 }

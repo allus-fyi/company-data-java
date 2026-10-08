@@ -229,7 +229,8 @@ Each `conn.values().get(slug)` is already decrypted (or a lazy binary handle). A
 
 * **Params:** `limit` — page size (default 100); `offset` — starting offset.
 * **Returns:** `Iterable<Connection>` / `Stream<Connection>`.
-* **Throws:** `AuthException`, `ApiException`, `DecryptException` (per value, at access), `RateLimitException` (after the iterator's bounded internal backoff — see [Rate limits](#rate-limits)).
+* **Throws:** `AuthException`, `ApiException`, `RateLimitException` (after the iterator's bounded internal backoff — see [Rate limits](#rate-limits)).
+* **A value the service key cannot open never ends the listing.** It is returned in its own place with `value()` `null` and `unreadable()` `true` (see [`Value`](#value)), and every other value and connection is returned as usual. When every value of every connection reads `unreadable()`, check the configured `service_private_key`.
 
 > **Heavily rate-limited.** Use for the initial full sync + occasional
 > reconciliation only — never as a poll substitute for the changes feed. The
@@ -251,7 +252,7 @@ Connection connection(String id)
 Fetch one connection by its connection id (`GET /api/company-data/connections/{id}`).
 
 * **Returns:** one `Connection`. Note: this endpoint returns `{connection_id, user_id, values}` and **no** `display_name`/`connected_at`, so those identity fields are `null` here (the list endpoint carries them).
-* **Throws:** `AuthException`, `ApiException` (404 if unknown), `DecryptException`, `RateLimitException`.
+* **Throws:** `AuthException`, `ApiException` (404 if unknown), `RateLimitException`. A value the service key cannot open is returned marked `unreadable()`, never raised.
 
 ### `deleteConnection(connectionId)`
 
@@ -363,21 +364,20 @@ PublishedFlow publishedFlow(String flowId)
 ### `flowRunAnswers(run)`
 
 ```java
-Map<String, Object> flowRunAnswers(FlowRun run)
+FlowRunAnswers flowRunAnswers(FlowRun run)
 ```
 
-#491 gap 1: a completed run's DECRYPTED answers as `{slug: plaintext}`. Decrypts
-the company's service-key answer copies of an already-fetched run — the public
-accessor for a finished run's answers (fetch the run with `flowRun(runId)`
-first, then pass it here).
+A completed run's DECRYPTED answers. Decrypts the company's service-key answer
+copies of an already-fetched run — the public accessor for a finished run's
+answers (fetch the run with `flowRun(runId)` first, then pass it here).
 
-* **Returns:** `Map<String, Object>` keyed by slug — only the rows whose `for_user_id` is the company's bound user_id are decryptable with the service key.
-* **Throws:** `AuthException`, `DecryptException`, `RateLimitException`.
+* **Returns:** a `FlowRunAnswers`: `answers()` is a `Map<String, Object>` keyed by slug — only the rows whose `for_user_id` is the company's bound user_id are decryptable with the service key — and `unreadable()` the list of slugs whose answer the service key could not open (empty when every answer opened). An unreadable answer is left out of `answers()` and never fails the call.
+* **Throws:** `AuthException`, `RateLimitException`.
 
 ```java
 FlowRun run = client.flowRun(runId);
-Map<String, Object> answers = client.flowRunAnswers(run);
-System.out.println(answers.get("plan_tier"));
+FlowRunAnswers answers = client.flowRunAnswers(run);
+System.out.println(answers.answers().get("plan_tier"));
 ```
 
 ### `CustomerClient.generateFlowDocument(connectionId, run)`
@@ -518,7 +518,7 @@ You work with these records and nothing else (`fyi.allme.allus.companydata`):
 RequestField { slug, label, type, oneTime, mandatory, verified, verifiedMaxAgeDays }
 Connection   { id, personId, displayName, connectedAt, values: Map<slug, Value> }
 Value        { value, live, updatedAt, verified, verifiedAt, verifiedExpiresAt,
-               verifiedMethod, verifiedProvider, verificationId }
+               verifiedMethod, verifiedProvider, verificationId, unreadable }
 Change       { id, event, personId, slug?, value?, live?, at }
 LogEntry     { type, message, metadata, at }
 ```
@@ -530,7 +530,7 @@ stable, explicit slug you set per request field in the portal — rename the lab
 freely, the slug is the contract. **The person's source field is never exposed**:
 no source slug, no `field_id`, not even via `.raw()`.
 
-### `Value(value, live, updatedAt, verified, verifiedAt, verifiedExpiresAt, verifiedMethod, verifiedProvider, verificationId)`
+### `Value(value, live, updatedAt, verified, verifiedAt, verifiedExpiresAt, verifiedMethod, verifiedProvider, verificationId, raw, unreadable)`
 
 | Accessor | Meaning |
 |----------|---------|
@@ -543,8 +543,11 @@ no source slug, no `field_id`, not even via `.raw()`.
 | `verifiedMethod()` | HOW allme bound the value: `email_code` \| `sms_code` \| `sumsub_id` \| `sumsub_address`. |
 | `verifiedProvider()` | WHO established the proof: `allme` \| `sumsub`. |
 | `verificationId()` | The proof id to quote back to allme in a dispute — it resolves the full record, including facts you never receive. |
+| `unreadable()` | `true` when the answer is present but the configured service key cannot open it — sealed to a key the service has since replaced, or a wrong configured key. `value()` is then `null` and `verified()` `false`; every other accessor is read as for a readable value. |
 
-The last three are the **proof metadata** and arrive **together or not at all**: a value bound before
+**Not readable is not empty.** An unanswered value is `value()` `null` with `unreadable()` `false`; a value that could not be opened is `value()` `null` with `unreadable()` `true`. A binary value is a lazy handle and is never marked: a binary whose file cannot be opened fails when its bytes are read. When every value of every connection reads `unreadable()`, check the configured `service_private_key`.
+
+`verifiedMethod()`, `verifiedProvider()` and `verificationId()` are the **proof metadata** and arrive **together or not at all**: a value bound before
 the proof log existed carries the four verification keys and none of these, so all three read `null`.
 They are readable whatever the verified boolean says — that boolean stays the only trust decision.
 
@@ -1333,7 +1336,7 @@ all six SDKs. They are unchecked (`RuntimeException`).
 | `ConfigException` | Missing/invalid config, unreadable key file, or wrong passphrase — at construction (fail fast). |
 | `AuthException` | Token fetch/refresh failed (bad `client_id`/`secret`, revoked client); or a 401 survives the one automatic refresh-and-retry. |
 | `ApiException` | Any non-2xx from the API; carries `status()`, the platform `errorKey()` (when present), and `apiMessage()`. |
-| `DecryptException` | A ciphertext wrapper is malformed, the key is wrong, or the GCM tag mismatches. Surfaces when a value is accessed/decrypted. |
+| `DecryptException` | A ciphertext wrapper is malformed, the key is wrong, or the GCM tag mismatches. Surfaces when a binary value's bytes are read, on a change event (the pump dead-letters it; a webhook parse throws it) and from flow-run routing and generation. `connections`/`connection` never throw it for a value — they mark it `unreadable()` — and `flowRunAnswers` lists such an answer under `unreadable()`. |
 | `WebhookException` | Signature verification failed, or an envelope couldn't be unwrapped/parsed. |
 | `RateLimitException` | A 429 from a rate-limited endpoint. Subclass of `ApiException` (status fixed at 429); carries `retryAfter()` (seconds, or `null`). |
 | `ValidationException` | A value fails its field type's check; or (`getBound()` = `"min"`/`"max"`, `getBoundValue()`) a flow value lies outside its field's bound. |

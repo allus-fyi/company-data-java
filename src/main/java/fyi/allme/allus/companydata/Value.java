@@ -15,6 +15,11 @@ import java.util.Map;
  * person chose "keep connected" (auto-updates) vs a one-time snapshot;
  * {@link #updatedAt()} = when this answer last changed. Both ride on the Value
  * (per-answer), not the definition. {@link #raw()} is the underlying hardened entry.
+ *
+ * <p>{@link #unreadable()} marks an answer that is present but could not be opened with the
+ * configured service key — sealed to a key the service has since replaced, or a wrong configured
+ * key. Such a value carries {@link #value()} null and {@link #verified()} false, and never fails the
+ * read it arrived in. An unanswered value is {@link #value()} null with {@link #unreadable()} false.
  */
 public record Value(
     Object value,
@@ -43,13 +48,31 @@ public record Value(
     String verifiedProvider,
     /** The id to quote back to allme in a dispute. Same all-or-none set. */
     String verificationId,
-    Map<String, Object> raw
+    Map<String, Object> raw,
+    /**
+     * True when the answer is present but could not be opened with the configured service key;
+     * {@link #value()} is then null and {@link #verified()} false. Every value of every connection
+     * reading true points at the configured key.
+     */
+    boolean unreadable
 ) {
+    /**
+     * Build a typed Value from one hardened {@code {value|value_url, live, updatedAt}} entry. An
+     * entry whose value cannot be opened ({@link DecryptException}) is built marked
+     * {@link #unreadable()}, with no plaintext; every other member is read from the entry as for a
+     * readable one. Any other failure propagates.
+     */
     static Value fromApi(Map<String, Object> entry, String fieldType, ModelDeps deps) {
         boolean live = Parse.bool(entry.get("live"));
         Object updatedRaw = entry.containsKey("updatedAt") ? entry.get("updatedAt") : entry.get("updated_at");
         OffsetDateTime updatedAt = Parse.isoDateTime(updatedRaw);
-        Object typed = deps.typedValue(entry, fieldType);
+        Object typed = null;
+        boolean unreadable = false;
+        try {
+            typed = deps.typedValue(entry, fieldType);
+        } catch (DecryptException exc) {
+            unreadable = true;
+        }
         return new Value(
             typed,
             live,
@@ -60,7 +83,8 @@ public record Value(
             Parse.str(entry.get("verified_method")),
             Parse.str(entry.get("verified_provider")),
             Parse.str(entry.get("verification_id")),
-            entry);
+            entry,
+            unreadable);
     }
 
     /**
