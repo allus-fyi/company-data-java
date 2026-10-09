@@ -136,6 +136,11 @@ public final class CustomerClient {
         return http.post(CONSENTS + "/" + consentId + "/decline", null);
     }
 
+    /**
+     * Edit a service link's answers. {@code answers} is the WHOLE answer set: a row it sends nothing
+     * for is withdrawn, and a row answered with {@link TypedAnswer#keep(String)} keeps its stored
+     * answer.
+     */
     public Object editAnswers(String connectionId, String serviceLinkId, List<TypedAnswer> answers,
                               String companyCode, String serviceCode) {
         List<Object> decisions = encryptTyped(answers, companyCode, serviceCode);
@@ -641,6 +646,9 @@ public final class CustomerClient {
         // Skip an answer whose type can't be resolved (do not invent one).
         Map<String, String> types = requestFieldTypes(companyCode, serviceCode);
         for (TypedAnswer a : answers) {
+            if (a.isKeep()) {
+                continue;
+            }
             String ft = types.get(a.requestFieldId());
             if (ft != null && !fieldTypes().isFieldValueValid(ft, a.value())) {
                 throw new ValidationException(a.requestFieldId(), ft);
@@ -651,7 +659,10 @@ public final class CustomerClient {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("request_field_id", a.requestFieldId());
             entry.put("kind", a.kind() != null ? a.kind() : "typed");
-            entry.put("value", Crypto.encryptForPublicKey(a.value(), pub));
+            // A kept row carries no value: nothing to encrypt.
+            if (!a.isKeep()) {
+                entry.put("value", Crypto.encryptForPublicKey(a.value(), pub));
+            }
             out.add(entry);
         }
         return out;
@@ -715,10 +726,24 @@ public final class CustomerClient {
 
     // ── nested value types ─────────────────────────────────────────────────────
 
-    /** A typed answer to a consent/edit request row (before encryption). */
+    /**
+     * A typed answer to a consent/edit request row (before encryption). Kind {@code "keep"}
+     * ({@link #keep(String)}, edit only) keeps the row's stored answer as it is and carries no value;
+     * the API accepts it only for a row that holds an answer now.
+     */
     public record TypedAnswer(String requestFieldId, String value, String kind) {
         public TypedAnswer(String requestFieldId, String value) {
             this(requestFieldId, value, "typed");
+        }
+
+        /** An edit decision that keeps {@code requestFieldId}'s stored answer as it is. */
+        public static TypedAnswer keep(String requestFieldId) {
+            return new TypedAnswer(requestFieldId, null, "keep");
+        }
+
+        /** Whether this answer keeps the row's stored answer. */
+        public boolean isKeep() {
+            return "keep".equals(kind);
         }
     }
 
