@@ -409,22 +409,20 @@ public final class IdentityHandlers {
 
     /**
      * Short-cycled advance for a pending run awaiting a detached / challenge outcome. ONE SDK wait with
-     * {@code timeout=2} per poll; the SDK's LOGICAL "not completed within Ns" timeout is treated as
-     * still-pending, while a real transport failure is a failed run. Clients are rebuilt from the run's
-     * scenario config file — the run stores no credentials.
+     * {@code timeout=2} per poll; a poll that got no HTTP response, or a 503, stays pending, and any
+     * other error is a failed run. Clients are rebuilt from the run's scenario config file — the run
+     * stores no credentials.
      */
     private Map<String, Object> advance(Map<String, Object> run) {
         String wait = strOrNull(run.get("wait"));
         int id = asInt(run.get("scenario"));
+        String signinCode = "";
         try {
             if ("detached_signin".equals(wait)) {
                 appendCall(run, CALL_POLL_SIGNIN);
                 OAuthClient oauth = oauthClientFor(id);
                 Map<String, Object> b = oauth.pollResult(strOr(run.get("state"), ""), POLL_TIMEOUT_S, POLL_INTERVAL_S);
-                String code = strOr(b.get("code"), "");
-                if (!code.isEmpty()) {
-                    run = completeSignin(run, code);
-                }
+                signinCode = strOr(b.get("code"), "");
             } else if ("detached_enroll".equals(wait)) {
                 appendCall(run, CALL_POLL_ENROLL);
                 OAuthClient oauth = oauthClientFor(id);
@@ -446,18 +444,28 @@ public final class IdentityHandlers {
             }
             // else (redirect / continue-on-phone): completion arrives via /callback — stay pending.
         } catch (ApiException e) {
-            // The SDK poll helpers signal a LOGICAL "not completed within {n}s" timeout as
-            // ApiException(status=0) with that sentinel message. A real transport failure ALSO surfaces
-            // as ApiException(status=0), so match the sentinel: only the logical timeout is "still
-            // pending"; a real network failure is a failed run.
-            if (e.status() == 0 && String.valueOf(e.getMessage()).contains("not completed within")) {
-                return run; // logical short-cycle timeout → still pending
+            // A poll that never received an HTTP response (ApiException status 0: the SDK's logical
+            // "not completed within" timeout, a transport timeout or a connection failure, the token
+            // request included) or that was answered 503 leaves the run pending; the next browser
+            // poll retries. Any other status is an answer another poll cannot change.
+            if (e.status() == 0 || e.status() == 503) {
+                return run;
             }
             run.put("status", "failed");
             run.put("error", String.valueOf(e.getMessage()));
         } catch (Throwable t) {
             run.put("status", "failed");
             run.put("error", String.valueOf(t.getMessage()));
+        }
+        // The delivered code is one-shot, so completing the sign-in is outside the retry rule above: a
+        // failure here ends the run instead of re-polling a result that is already consumed.
+        if (!signinCode.isEmpty()) {
+            try {
+                run = completeSignin(run, signinCode);
+            } catch (Throwable t) {
+                run.put("status", "failed");
+                run.put("error", String.valueOf(t.getMessage()));
+            }
         }
         return run;
     }
