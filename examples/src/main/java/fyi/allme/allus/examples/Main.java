@@ -8,7 +8,6 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
-import java.net.ServerSocket;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -75,16 +74,18 @@ public final class Main {
                 + "Bump the frontend.lock pin to a release whose contract.json matches, or update the backend.");
         }
 
-        // 4. port
+        // 4. port + serve — SINGLE WORKER (single-thread executor), on ALL interfaces: the wildcard
+        // InetSocketAddress(port) binds every interface, so a phone on the same network can reach it.
+        // The server's own bind is the busy-port check.
         int port = envPort();
-        if (!portFree(port)) {
+        HttpServer http;
+        try {
+            http = HttpServer.create(new InetSocketAddress(port), 0);
+        } catch (IOException e) {
             fail("port " + port + " is busy. Set PORT=<n> to use another port "
                 + "(one browser origin is shared across SDK examples, so only one runs at a time).");
+            return;
         }
-
-        // 5. serve — SINGLE WORKER (single-thread executor), on ALL interfaces: the wildcard
-        // InetSocketAddress(port) binds every interface, so a phone on the same network can reach it.
-        HttpServer http = HttpServer.create(new InetSocketAddress(port), 0);
         http.setExecutor(Executors.newSingleThreadExecutor());
         new Server(rt, frontend, sdkVersion()).attach(http);
         http.start();
@@ -164,17 +165,6 @@ public final class Main {
             return Integer.parseInt(p);
         }
         return 8091;
-    }
-
-    /** Probes the SAME address the server binds (all interfaces), not just loopback. */
-    private static boolean portFree(int port) {
-        try (ServerSocket s = new ServerSocket()) {
-            s.setReuseAddress(false);
-            s.bind(new InetSocketAddress(port));
-            return true;
-        } catch (IOException e) {
-            return false;
-        }
     }
 
     /**
