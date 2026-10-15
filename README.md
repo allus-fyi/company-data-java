@@ -758,14 +758,17 @@ person's profile share code; otherwise the SDK resolves it from `connectionId`
 ### List / fetch / update / delete
 
 ```java
-// List this service's documents (paged; optional person/status filter).
+// Every document of this service, newest first: a lazy Iterable that pages
+// GET /api/company-data/documents with its cursor, fetching the next page only
+// once this one is consumed.
 for (Document doc : client.listDocuments()) {
     System.out.printf("%s  %-14s %-7s %s%n",
         doc.id(), doc.kind(), doc.status(), doc.name());
 }
-// Filtered: client.listDocuments(personUserId, status, limit, offset)
-List<Document> openForAlice =
-    client.listDocuments("019alice…", "ready_to_sign", 50, 0);
+// Filtered: client.listDocuments(personUserId, status, limit) — limit is the page size (1–500)
+for (Document open : client.listDocuments("019alice…", "ready_to_sign", 50)) {
+    System.out.println(open.name());
+}
 
 // Fetch one by id.
 Document doc = client.document(contract.id());

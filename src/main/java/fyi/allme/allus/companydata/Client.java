@@ -870,25 +870,75 @@ public final class Client {
     }
 
     /**
-     * List this service's documents → {@code List<Document>} (paged; optional
-     * person/status filter).
+     * Every document of this service, newest first → a lazy {@code Iterable<Document>}
+     * (optional person/status filter). It pages {@code GET /api/company-data/documents}
+     * with its cursor: {@code limit} is the page size (1–500), and each page's
+     * {@code next} marker is sent back as {@code after} until a page answers none. A
+     * page is fetched only once the previous one has been consumed.
      */
-    public List<Document> listDocuments() {
-        return listDocuments(null, null, 100, 0);
+    public Iterable<Document> listDocuments() {
+        return listDocuments(null, null, 100);
     }
 
-    public List<Document> listDocuments(String personUserId, String status, int limit, int offset) {
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("limit", String.valueOf(Math.max(1, limit)));
-        params.put("offset", String.valueOf(Math.max(0, offset)));
-        if (personUserId != null) {
-            params.put("person_user_id", personUserId);
+    public Iterable<Document> listDocuments(String personUserId, String status, int limit) {
+        int page = Math.min(500, Math.max(1, limit));
+        return () -> new DocumentIterator(personUserId, status, page);
+    }
+
+    private final class DocumentIterator implements Iterator<Document> {
+        private final String personUserId;
+        private final String status;
+        private final int page;
+        private String after = null;
+        private final List<Document> buf = new ArrayList<>();
+        private int idx = 0;
+        private boolean exhausted = false;
+
+        DocumentIterator(String personUserId, String status, int page) {
+            this.personUserId = personUserId;
+            this.status = status;
+            this.page = page;
         }
-        if (status != null) {
-            params.put("status", status);
+
+        @Override
+        public boolean hasNext() {
+            while (idx >= buf.size() && !exhausted) {
+                fillNextPage();
+            }
+            return idx < buf.size();
         }
-        Object body = http.get(DOCUMENTS, params);
-        return Document.listFromApi(body, this::decryptValue);
+
+        @Override
+        public Document next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            return buf.get(idx++);
+        }
+
+        private void fillNextPage() {
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("limit", String.valueOf(page));
+            if (personUserId != null) {
+                params.put("person_user_id", personUserId);
+            }
+            if (status != null) {
+                params.put("status", status);
+            }
+            if (after != null) {
+                params.put("after", after);
+            }
+            Object body = http.get(DOCUMENTS, params);
+            buf.clear();
+            idx = 0;
+            buf.addAll(Document.listFromApi(body, Client.this::decryptValue));
+            Object next = body instanceof Map<?, ?> m ? m.get("next") : null;
+            if (next instanceof String marker && !marker.isEmpty()) {
+                after = marker;
+            } else {
+                exhausted = true;
+            }
+        }
     }
 
     /** Fetch one document by id → {@link Document}. */

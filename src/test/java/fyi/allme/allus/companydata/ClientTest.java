@@ -803,7 +803,7 @@ class ClientTest {
         List<Object[]> seen = new ArrayList<>();
         BiFunction<String, Map<String, String>, Response> get = (url, params) -> {
             if (url.endsWith("/documents")) {
-                return FakeTransport.json(200, "{\"total\":0,\"items\":[]}");
+                return FakeTransport.json(200, "{\"items\":[],\"next\":null}");
             }
             if (url.contains("/documents/d9")) {
                 return FakeTransport.json(200,
@@ -819,7 +819,7 @@ class ClientTest {
         RoutingTransport t = new RoutingTransport(get, wr);
         Client client = new Client(config(tmp), t);
 
-        assertTrue(client.listDocuments(null, "active", 100, 0).isEmpty());
+        assertFalse(client.listDocuments(null, "active", 100).iterator().hasNext());
         assertEquals("d9", client.document("d9").id());
         client.updateDocumentStatus("d9", "ended");
         client.updateDocumentMetadata("d9", null, "renamed", null);
