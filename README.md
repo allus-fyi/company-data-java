@@ -213,21 +213,24 @@ for (RequestField f : client.requestFields()) {
 }
 ```
 
-### `connections(limit, offset)`
+### `connections(limit)`
 
 ```java
 Iterable<Connection> connections()
-Iterable<Connection> connections(int limit, int offset)
+Iterable<Connection> connections(int limit)
 Stream<Connection>   connectionStream()
-Stream<Connection>   connectionStream(int limit, int offset)
+Stream<Connection>   connectionStream(int limit)
 ```
 
-A **lazy iterable** that auto-pages `GET /api/company-data/connections?limit&offset`
-and yields one typed `Connection` at a time (bounded memory for a large book).
+A **lazy iterable** that pages `GET /api/company-data/connections`, newest connection
+first, following the list's cursor — each page's `next` marker is sent back as `after`
+until a page answers none — and yields one typed `Connection` at a time (bounded memory
+for a large book). A page is fetched only once the previous one has been consumed; a page
+costs the platform the same at any depth, and the list carries no total.
 Each `conn.values().get(slug)` is already decrypted (or a lazy binary handle). A
 `Stream` view is also provided.
 
-* **Params:** `limit` — page size (default 100); `offset` — starting offset.
+* **Params:** `limit` — page size (default 100, max 500).
 * **Returns:** `Iterable<Connection>` / `Stream<Connection>`.
 * **Throws:** `AuthException`, `ApiException`, `RateLimitException` (after the iterator's bounded internal backoff — see [Rate limits](#rate-limits)).
 * **A value the service key cannot open never ends the listing.** It is returned in its own place with `value()` `null` and `unreadable()` `true` (see [`Value`](#value)), and every other value and connection is returned as usual. When every value of every connection reads `unreadable()`, check the configured `service_private_key`.
@@ -238,7 +241,7 @@ Each `conn.values().get(slug)` is already decrypted (or a lazy binary handle). A
 
 ```java
 // Initial full sync, streaming so a 100k-connection book never lands in memory.
-for (Connection conn : client.connections(200, 0)) {
+for (Connection conn : client.connections(200)) {
     upsertLocalRecord(conn);
 }
 ```
@@ -397,17 +400,19 @@ service key is involved.
 * **Returns:** the raw API response `{documents, status}` — one `{output_key, party_key, document_id, position}` per produced (output document, participant); a repeat answers the same set.
 * **Throws:** `ConfigException` when the run's current step is not bound to your company; `AuthException`, `ApiException`, `DecryptException`, `RateLimitException`.
 
-### `logs(limit, offset)`
+### `logs(limit)`
 
 ```java
-List<LogEntry> logs()
-List<LogEntry> logs(int limit, int offset)
+Iterable<LogEntry> logs()
+Iterable<LogEntry> logs(int limit)
 ```
 
-The service's activity log (`GET /api/company-data/logs?limit&offset`) — **ops
-events only** (email / purge / webhook), never person field data.
+The service's activity log, newest first (`GET /api/company-data/logs`) — **ops
+events only** (email / purge / webhook), never person field data. A **lazy iterable**
+following the list's cursor (`next` sent back as `after`) until a page answers none.
 
-* **Returns:** `List<LogEntry>` — each `LogEntry(type, message, metadata, at, raw)`.
+* **Params:** `limit` — page size (default 50, max 200).
+* **Returns:** `Iterable<LogEntry>` — each `LogEntry(type, message, metadata, at, raw)`.
 
 ### `processChanges(handler, options?)`
 

@@ -184,7 +184,6 @@ class ClientTest {
     void connectionsYieldsTypedDecrypted(@TempDir Path tmp) throws Exception {
         Map<String, Object> addrWrapper = encryptForKey("{\"city\":\"Utrecht\",\"country\":\"NL\"}");
         String page1 = fyi.allme.allus.companydata.internal.Json.write(Map.of(
-            "total", 2,
             "items", List.of(Map.of(
                 "connection_id", "csc-1",
                 "user_id", "person-1",
@@ -202,13 +201,13 @@ class ClientTest {
                 return FakeTransport.json(200, REQUEST_FIELDS_BODY);
             }
             if (url.endsWith("/connections")) {
-                return FakeTransport.json(200, page1); // short page (1 < limit) → stop
+                return FakeTransport.json(200, page1); // no `next` → stop
             }
             throw new AssertionError("unexpected GET " + url);
         });
         Client client = new Client(config(tmp), t);
         List<Connection> conns = new ArrayList<>();
-        for (Connection c : client.connections(100, 0)) {
+        for (Connection c : client.connections(100)) {
             conns.add(c);
         }
         assertEquals(1, conns.size());
@@ -230,11 +229,10 @@ class ClientTest {
     @Test
     void connectionsAutoPages(@TempDir Path tmp) throws Exception {
         List<String> pages = List.of(
-            fyi.allme.allus.companydata.internal.Json.write(Map.of("total", 3, "items", List.of(
+            fyi.allme.allus.companydata.internal.Json.write(Map.of("next", "m1", "items", List.of(
                 Map.of("connection_id", "c1", "user_id", "p1", "display_name", "N1", "values", Map.of()),
                 Map.of("connection_id", "c2", "user_id", "p2", "display_name", "N2", "values", Map.of())))),
-            fyi.allme.allus.companydata.internal.Json.write(Map.of("total", 3, "items", List.of(
-                Map.of("connection_id", "c3", "user_id", "p3", "display_name", "N3", "values", Map.of())))));
+            "{\"next\":null,\"items\":[{\"connection_id\":\"c3\",\"user_id\":\"p3\",\"display_name\":\"N3\",\"values\":{}}]}");
         int[] i = {0};
         RoutingTransport t = new RoutingTransport((url, params) -> {
             if (url.endsWith("/request-fields")) {
@@ -247,13 +245,16 @@ class ClientTest {
         });
         Client client = new Client(config(tmp), t);
         List<String> ids = new ArrayList<>();
-        for (Connection c : client.connections(2, 0)) {
+        for (Connection c : client.connections(2)) {
             ids.add(c.id());
         }
         assertEquals(List.of("c1", "c2", "c3"), ids);
-        List<String> offsets = t.gets.stream().filter(g -> g.url().endsWith("/connections"))
-            .map(g -> g.params().get("offset")).toList();
-        assertEquals(List.of("0", "2"), offsets);
+        List<Map<String, String>> connGets = t.gets.stream().filter(g -> g.url().endsWith("/connections"))
+            .map(g -> g.params()).toList();
+        assertEquals(2, connGets.size());
+        assertNull(connGets.get(0).get("after"));
+        assertEquals("m1", connGets.get(1).get("after"));
+        assertTrue(connGets.stream().noneMatch(p -> p.containsKey("offset")));
     }
 
     // ── binary handle fetches the slot endpoint + decrypts ──────────────────────
@@ -263,7 +264,7 @@ class ClientTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> binary = (Map<String, Object>) vector.get("binary");
         String page = fyi.allme.allus.companydata.internal.Json.write(Map.of(
-            "total", 1, "items", List.of(Map.of(
+            "items", List.of(Map.of(
                 "connection_id", "csc-1", "user_id", "person-1", "display_name", "Anna",
                 "values", Map.of("logo", Map.of("value_url",
                     "https://api.allme.fyi/api/company-data/connections/csc-1/slots/sf-9/file", "live", true))))));
@@ -299,7 +300,7 @@ class ClientTest {
     void binaryHandleServesPlaintextBytes(@TempDir Path tmp) throws Exception {
         byte[] fileBytes = new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe0, 'n', 'o', 't', '-', 'a', '-', 'j', 'p', 'g'};
         String page = fyi.allme.allus.companydata.internal.Json.write(Map.of(
-            "total", 1, "items", List.of(Map.of(
+            "items", List.of(Map.of(
                 "connection_id", "csc-1", "user_id", "person-1", "display_name", "Anna",
                 "values", Map.of("logo", Map.of("value_url",
                     "https://api.allme.fyi/api/company-data/connections/csc-1/slots/sf-9/file", "live", true))))));
@@ -330,7 +331,7 @@ class ClientTest {
     @Test
     void binaryHandleExpiredAnswerCarriesDigest(@TempDir Path tmp) throws Exception {
         String page = fyi.allme.allus.companydata.internal.Json.write(Map.of(
-            "total", 1, "items", List.of(Map.of(
+            "items", List.of(Map.of(
                 "connection_id", "csc-1", "user_id", "person-1", "display_name", "Anna",
                 "values", Map.of("logo", Map.of("value_url",
                     "https://api.allme.fyi/api/company-data/connections/csc-1/slots/sf-9/file", "live", false))))));
@@ -385,24 +386,31 @@ class ClientTest {
 
     @Test
     void logsDeserialize(@TempDir Path tmp) throws Exception {
-        String body = fyi.allme.allus.companydata.internal.Json.write(Map.of(
-            "total", 2, "items", List.of(
-                Map.of("type", "email", "message", "stale-queue alert", "metadata", Map.of("days", 3),
-                    "created_at", "2026-06-17T06:00:00Z"),
-                Map.of("type", "purge", "message", "purged 4", "metadata", Map.of("count", 4),
-                    "created_at", "2026-06-17T07:00:00Z"))));
+        List<String> pages = List.of(
+            fyi.allme.allus.companydata.internal.Json.write(Map.of(
+                "next", "m1", "items", List.of(
+                    Map.of("type", "email", "message", "stale-queue alert", "metadata", Map.of("days", 3),
+                        "created_at", "2026-06-17T06:00:00Z")))),
+            "{\"next\":null,\"items\":[{\"type\":\"purge\",\"message\":\"purged 4\","
+                + "\"metadata\":{\"count\":4},\"created_at\":\"2026-06-17T07:00:00Z\"}]}");
+        int[] i = {0};
         RoutingTransport t = new RoutingTransport((url, params) -> {
             if (url.endsWith("/logs")) {
-                return FakeTransport.json(200, body);
+                return FakeTransport.json(200, pages.get(i[0]++));
             }
             throw new AssertionError("unexpected GET " + url);
         });
         Client client = new Client(config(tmp), t);
-        List<LogEntry> logs = client.logs(50, 0);
+        List<LogEntry> logs = new ArrayList<>();
+        for (LogEntry e : client.logs(50)) {
+            logs.add(e);
+        }
         assertEquals(2, logs.size());
         assertEquals("email", logs.get(0).type());
         assertEquals(Map.of("days", 3), logs.get(0).metadata());
         assertEquals("50", t.gets.get(0).params().get("limit"));
+        assertNull(t.gets.get(0).params().get("after"));
+        assertEquals("m1", t.gets.get(1).params().get("after"));
     }
 
     // ── process_changes() drains the feed through the pump one-by-one ────────────

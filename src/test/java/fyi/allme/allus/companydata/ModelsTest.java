@@ -345,7 +345,7 @@ class ModelsTest {
         e2.put("metadata", Map.of("count", 4));
         e2.put("created_at", "2026-06-17T07:00:00Z");
 
-        List<LogEntry> logs = LogEntry.listFromApi(Map.of("total", 2, "items", List.of(e1, e2)));
+        List<LogEntry> logs = LogEntry.listFromApi(Map.of("items", List.of(e1, e2)));
         assertEquals(2, logs.size());
         assertEquals("email", logs.get(0).type());
         assertEquals(Map.of("days", 3), logs.get(0).metadata());

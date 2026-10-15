@@ -204,16 +204,21 @@ class FlowRunTest {
 
     @Test
     void flowRunsDefaultAwaitingCompany(@TempDir Path tmp) throws Exception {
+        List<String> afters = new java.util.ArrayList<>();
         ClientTest.RoutingTransport t = new ClientTest.RoutingTransport((url, params) -> {
             assertTrue(url.endsWith("/company-data/flow-runs"));
             assertEquals("awaiting_company", params.get("status"));
+            String after = params.get("after");
+            afters.add(after == null ? "" : after);
+            String next = after == null ? "\"m1\"" : "null";
             return FakeTransport.json(200,
-                "{\"total\":1,\"items\":[" + json(runObj()) + "]}");
+                "{\"next\":" + next + ",\"items\":[" + json(runObj()) + "]}");
         });
         Client client = new Client(config(tmp), t);
         List<FlowRun> runs = client.flowRuns();
-        assertEquals(1, runs.size());
+        assertEquals(2, runs.size());
         assertEquals("awaiting_company", runs.get(0).status());
+        assertEquals(List.of("", "m1"), afters);
     }
 
     @Test

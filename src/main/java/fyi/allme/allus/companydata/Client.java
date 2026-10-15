@@ -31,9 +31,9 @@ import java.util.stream.StreamSupport;
  *
  * <pre>
  * client.requestFields()              -> cached List&lt;RequestField&gt;  (slug -> meta)
- * client.connections(limit, offset)   -> lazy Iterable&lt;Connection&gt; (auto-paged)
+ * client.connections(limit)           -> lazy Iterable&lt;Connection&gt; (auto-paged)
  * client.connection(id)               -> one Connection
- * client.logs(limit, offset)          -> List&lt;LogEntry&gt;
+ * client.logs(limit)                  -> lazy Iterable&lt;LogEntry&gt; (auto-paged)
  * client.processChanges(handler, ...) -> the crash-safe pump
  * client.drainBatch(max)              -> raw unbuffered drain (advanced)
  * client.deadLetters() / client.retryDeadLetters(handler)
@@ -62,6 +62,10 @@ public final class Client {
     private static final String KEYS = "/api/keys";
 
     private static final int DEFAULT_CONN_PAGE = 100;
+
+    /** Page size {@link #flowRuns(String)} reads the run list with (the list's maximum). */
+    private static final int FLOW_RUN_PAGE = 500;
+
     private static final int CONN_MAX_429_BACKOFFS = 5;
     private static final double CONN_DEFAULT_BACKOFF_S = 5.0;
     private static final double CONN_MAX_BACKOFF_S = 120.0;
@@ -387,39 +391,42 @@ public final class Client {
      * as a poll substitute for the changes feed. On a surfaced
      * {@link RateLimitException} the iterator backs off per {@code Retry-After} and
      * retries the page a bounded number of times before re-raising.
+     *
+     * <p>Pages are read newest connection first with the list's cursor: each page's {@code next}
+     * marker is sent back as {@code after} until a page answers none, and a page is fetched only
+     * once the previous one has been consumed.
      */
     public Iterable<Connection> connections() {
-        return connections(DEFAULT_CONN_PAGE, 0);
+        return connections(DEFAULT_CONN_PAGE);
     }
 
-    public Iterable<Connection> connections(int limit, int offset) {
+    /** {@link #connections()} with {@code limit} as the page size. */
+    public Iterable<Connection> connections(int limit) {
         int page = Math.max(1, limit);
-        int start = Math.max(0, offset);
         requestFields(); // ensure the slug catalog is loaded so values are typed
-        return () -> new ConnectionIterator(page, start);
+        return () -> new ConnectionIterator(page);
     }
 
-    /** A {@link Stream} view of {@link #connections(int, int)} (idiomatic alternative). */
-    public Stream<Connection> connectionStream(int limit, int offset) {
-        Iterator<Connection> it = connections(limit, offset).iterator();
+    /** A {@link Stream} view of {@link #connections(int)} (idiomatic alternative). */
+    public Stream<Connection> connectionStream(int limit) {
+        Iterator<Connection> it = connections(limit).iterator();
         return StreamSupport.stream(
             Spliterators.spliteratorUnknownSize(it, Spliterator.ORDERED), false);
     }
 
     public Stream<Connection> connectionStream() {
-        return connectionStream(DEFAULT_CONN_PAGE, 0);
+        return connectionStream(DEFAULT_CONN_PAGE);
     }
 
     private final class ConnectionIterator implements Iterator<Connection> {
         private final int page;
-        private int offset;
+        private String after = null;
         private final List<Connection> buf = new ArrayList<>();
         private int idx = 0;
         private boolean exhausted = false;
 
-        ConnectionIterator(int page, int offset) {
+        ConnectionIterator(int page) {
             this.page = page;
-            this.offset = offset;
         }
 
         @Override
@@ -440,15 +447,10 @@ public final class Client {
 
         @SuppressWarnings("unchecked")
         private void fillNextPage() {
-            Object body = getConnectionsPage(page, offset);
-            List<Object> items = listItems(body);
-            if (items.isEmpty()) {
-                exhausted = true;
-                return;
-            }
+            Object body = getConnectionsPage(page, after);
             buf.clear();
             idx = 0;
-            for (Object obj : items) {
+            for (Object obj : listItems(body)) {
                 if (obj instanceof Map<?, ?> map) {
                     // The list row carries identity AND the values map, so the same
                     // object is both detail + identity.
@@ -456,22 +458,22 @@ public final class Client {
                     buf.add(Connection.fromApi(m, deps, m));
                 }
             }
-            // A short page means we reached the end (fewer rows than asked for).
-            if (items.size() < page) {
+            after = nextMarker(body);
+            if (after == null) {
                 exhausted = true;
-            } else {
-                offset += page;
             }
         }
     }
 
-    private Object getConnectionsPage(int page, int offset) {
+    private Object getConnectionsPage(int page, String after) {
         int attempts = 0;
         while (true) {
             try {
                 Map<String, String> params = new LinkedHashMap<>();
                 params.put("limit", String.valueOf(page));
-                params.put("offset", String.valueOf(offset));
+                if (after != null) {
+                    params.put("after", after);
+                }
                 return http.get(CONNECTIONS, params);
             } catch (RateLimitException exc) {
                 attempts++;
@@ -479,8 +481,7 @@ public final class Client {
                     throw exc;
                 }
                 double delay = connBackoff(exc.retryAfter(), attempts);
-                log.warning("connections rate-limited (offset=" + offset + "); backoff " + delay
-                    + "s (attempt " + attempts + ")");
+                log.warning("connections rate-limited; backoff " + delay + "s (attempt " + attempts + ")");
                 if (delay > 0) {
                     sleep.accept(delay);
                 }
@@ -524,17 +525,64 @@ public final class Client {
 
     // ── logs (moderate rate-limit) ──────────────────────────────────────────────
 
-    /** The service's activity log → {@code List<LogEntry>}. */
-    public List<LogEntry> logs() {
-        return logs(50, 0);
+    /**
+     * The service's activity log, newest first → a lazy {@code Iterable<LogEntry>}. It pages
+     * {@code GET /api/company-data/logs} with its cursor: {@code limit} is the page size (1–200),
+     * and each page's {@code next} marker is sent back as {@code after} until a page answers none.
+     * Ops events only (email / purge / webhook) — never person field data.
+     */
+    public Iterable<LogEntry> logs() {
+        return logs(50);
     }
 
-    public List<LogEntry> logs(int limit, int offset) {
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("limit", String.valueOf(Math.max(1, limit)));
-        params.put("offset", String.valueOf(Math.max(0, offset)));
-        Object body = http.get(LOGS, params);
-        return LogEntry.listFromApi(body);
+    /** {@link #logs()} with {@code limit} as the page size. */
+    public Iterable<LogEntry> logs(int limit) {
+        int page = Math.min(200, Math.max(1, limit));
+        return () -> new LogIterator(page);
+    }
+
+    private final class LogIterator implements Iterator<LogEntry> {
+        private final int page;
+        private String after = null;
+        private final List<LogEntry> buf = new ArrayList<>();
+        private int idx = 0;
+        private boolean exhausted = false;
+
+        LogIterator(int page) {
+            this.page = page;
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (idx >= buf.size() && !exhausted) {
+                fillNextPage();
+            }
+            return idx < buf.size();
+        }
+
+        @Override
+        public LogEntry next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            return buf.get(idx++);
+        }
+
+        private void fillNextPage() {
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("limit", String.valueOf(page));
+            if (after != null) {
+                params.put("after", after);
+            }
+            Object body = http.get(LOGS, params);
+            buf.clear();
+            idx = 0;
+            buf.addAll(LogEntry.listFromApi(body));
+            after = nextMarker(body);
+            if (after == null) {
+                exhausted = true;
+            }
+        }
     }
 
     // ── changes feed — the crash-safe pump ────────────────────────
@@ -932,10 +980,8 @@ public final class Client {
             buf.clear();
             idx = 0;
             buf.addAll(Document.listFromApi(body, Client.this::decryptValue));
-            Object next = body instanceof Map<?, ?> m ? m.get("next") : null;
-            if (next instanceof String marker && !marker.isEmpty()) {
-                after = marker;
-            } else {
+            after = nextMarker(body);
+            if (after == null) {
                 exhausted = true;
             }
         }
@@ -1415,21 +1461,33 @@ public final class Client {
     }
 
     /**
-     * List this service's runs. A {@code null} or {@code "*"} status returns the unfiltered list;
-     * any other value is a status filter ({@code awaiting_<party>} / {@code generating} /
-     * {@code awaiting_signature} / {@code completed} / {@code cancelled}).
+     * List this service's runs, newest first. A {@code null} or {@code "*"} status returns the
+     * unfiltered list; any other value is a status filter ({@code awaiting_<party>} /
+     * {@code generating} / {@code awaiting_signature} / {@code completed} / {@code cancelled}).
+     * Every page of {@code GET /api/company-data/flow-runs} is read, following its cursor
+     * ({@code next} sent back as {@code after}) until a page answers none.
      */
     public List<FlowRun> flowRuns(String status) {
-        Map<String, String> params = null;
-        if (status != null && !status.isEmpty() && !"*".equals(status)) {
-            params = Map.of("status", status);
-        }
-        Object body = params != null ? http.get(FLOW_RUNS, params) : http.get(FLOW_RUNS);
         List<FlowRun> out = new ArrayList<>();
-        for (Object o : listItems(body)) {
-            out.add(FlowRun.fromApi(o));
+        String after = null;
+        while (true) {
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("limit", String.valueOf(FLOW_RUN_PAGE));
+            if (status != null && !status.isEmpty() && !"*".equals(status)) {
+                params.put("status", status);
+            }
+            if (after != null) {
+                params.put("after", after);
+            }
+            Object body = http.get(FLOW_RUNS, params);
+            for (Object o : listItems(body)) {
+                out.add(FlowRun.fromApi(o));
+            }
+            after = nextMarker(body);
+            if (after == null) {
+                return out;
+            }
         }
-        return out;
     }
 
     /** Fetch one run by id → {@link FlowRun}. */
@@ -2074,6 +2132,15 @@ public final class Client {
         } catch (DecryptException exc) {
             throw new ConfigException("could not load service private key: " + exc.getMessage(), exc);
         }
+    }
+
+    /**
+     * A cursor-paged list response's {@code next} marker, or null on the last page. An empty
+     * string — what an XML response carries for a null {@code next} — is the last page too.
+     */
+    private static String nextMarker(Object body) {
+        Object next = body instanceof Map<?, ?> m ? m.get("next") : null;
+        return next instanceof String marker && !marker.isEmpty() ? marker : null;
     }
 
     @SuppressWarnings("unchecked")
