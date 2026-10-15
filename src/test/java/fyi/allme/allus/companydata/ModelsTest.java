@@ -491,7 +491,8 @@ class ModelsTest {
         ev.put("event", "document_status_changed");
         ev.put("person_user_id", "u-3");
         ev.put("action", "cancelled");
-        ev.put("note", "Too expensive");
+        ev.put("note", fyi.allme.allus.companydata.internal.Json.write(
+            Crypto.encryptForPublicKey("Too expensive", publicKey)));
         ev.put("document_id", "doc-5");
         ev.put("status", "ended");
         ev.put("at", "2026-06-22T10:00:00Z");

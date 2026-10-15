@@ -216,6 +216,8 @@ record Change(
 | `field_updated` | `slug` + decrypted `value` (+ `live`); binary → a lazy `BinaryHandle` |
 | `field_deleted` | `slug`, no value |
 | `consent_accepted` / `consent_declined` | `slug` |
+| `document_status_changed` | `documentId` + `status` (+ a contract `action`); a signature also carries `method`, `contentSha256`, `signedAt`, `signerFirstName`, `signerLastName`, `signerNameVerified`, a cancellation `note` and `cancelEffectiveDate`. The signer names and the note arrive encrypted to the service key and are DECRYPTED by the SDK |
+| `document_sealed` | `documentId`, `sealedAt`, `plainSha256` (lowercase hex) — emitted when the platform seals a file document, never a JSON contract. A webhook receives it only when subscribed to it (or has an empty event filter, which receives every event) |
 | `message_received` | `connectionId`, `messageId`, `personPublicKey` + `messageBody` (the DECRYPTED message text); no slot. Person→company only — a broadcast raises no event |
 
 The event's ciphertext is carried under `body`. It is never `value`: on every other

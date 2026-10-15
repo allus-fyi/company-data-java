@@ -667,7 +667,7 @@ A change-feed / webhook event.
 | Accessor | Meaning |
 |----------|---------|
 | `id()` | **The stable server change-row id — your dedup key** (captured before the server delete). |
-| `event()` | `connection_created`, `connection_deleted`, `field_updated`, `field_deleted`, `consent_accepted`, `consent_declined`, `document_status_changed`, `message_received`. |
+| `event()` | `connection_created`, `connection_deleted`, `field_updated`, `field_deleted`, `consent_accepted`, `consent_declined`, `document_status_changed`, `document_sealed`, `message_received`. |
 | `personId()` | The person the change is about (may be `null`). |
 | `slug()`, `value()`, `live()` | Present only on `field_updated`; `value()` is typed exactly like `Value.value()` (incl. a lazy `BinaryHandle` for binaries). Connection/consent events carry no slot/value. `live()` is `null` when absent. |
 | `connectionId()`, `messageId()`, `personPublicKey()`, `messageBody()` | Present only on `message_received` — a person messaged your service. `messageBody()` is the **decrypted** text. See [Messaging](#messaging). |
@@ -892,10 +892,18 @@ set; `flows.source_pdf_invalid` (400) refuses a source that is not a usable PDF,
 When a document's lifecycle status changes, the platform emits a
 `document_status_changed` change event. It rides the same pump / webhook channel
 as field changes — the `Change` carries `documentId()` and `status()` (no
-slot/value). A transition to `active` additionally carries `sealedAt()`,
-`plainSha256()`, `signerFirstName()`, `signerLastName()` and
-`signerNameVerified()` — the same seal state the document read carries, so you
-never need a follow-up `document(id)` call just to learn a run sealed:
+slot/value). A signature additionally carries `signerFirstName()`,
+`signerLastName()` and `signerNameVerified()`, and a cancellation `note()`. The
+signer names and the note arrive encrypted to the service key; the SDK decrypts
+them, so the accessors return plaintext.
+
+When the platform seals a file document (never a JSON contract), it emits a
+separate `document_sealed` change event carrying `documentId()`, `sealedAt()` and
+`plainSha256()` — the same seal state the document read carries, so you never
+need a follow-up `document(id)` call just to learn a run sealed. `sealedAt()` and
+`plainSha256()` are `null` on every other event. A webhook receives
+`document_sealed` only when it subscribes to it (or has an empty event filter, which receives every event); a subscription to
+`document_status_changed` alone does not deliver it:
 
 ```java
 client.processChanges(change -> {
@@ -903,6 +911,8 @@ client.processChanges(change -> {
     switch (change.event()) {
         case "document_status_changed" ->
             onDocumentStatus(change.documentId(), change.status());   // e.g. "active" / "ended"
+        case "document_sealed" ->
+            onDocumentSealed(change.documentId(), change.sealedAt(), change.plainSha256());
         case "field_updated" ->
             store(change.personId(), change.slug(), change.value());
         default -> { }
@@ -911,7 +921,8 @@ client.processChanges(change -> {
 });
 ```
 
-`documentId()` / `status()` are non-null only on `document_status_changed`.
+`status()` is non-null only on `document_status_changed`; `documentId()` on
+`document_status_changed` and `document_sealed`.
 
 ---
 

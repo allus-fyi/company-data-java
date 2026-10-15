@@ -17,9 +17,10 @@ import java.util.Map;
  * profile share code, present on every event (may be {@code null}).
  * {@link #slug()}/{@link #value()}/{@link #live()} are present only on
  * {@code field_updated} (connection/consent events carry no slot/value).
- * {@link #live()} is {@code null} when absent. {@link #documentId()}/{@link #status()}/
- * {@link #note()} are set only on {@code document_status_changed} ({@link #note()} is the
- * person's optional cancellation note).
+ * {@link #live()} is {@code null} when absent. {@link #status()}/{@link #note()} are set only
+ * on {@code document_status_changed} ({@link #note()} is the person's optional cancellation
+ * note, decrypted from service-key ciphertext); {@link #documentId()} is set on
+ * {@code document_status_changed} and {@code document_sealed}.
  */
 public record Change(
     String id,
@@ -34,15 +35,15 @@ public record Change(
     String documentId,
     String status,
     String action,   // set on document_status_changed for a contract: signed | accepted | cancelled
-    String note,     // set on document_status_changed: the person's optional cancellation note
+    String note,     // set on document_status_changed: the person's optional cancellation note, decrypted from service-key ciphertext
     String method,        // set on a signature: biometric | twofa | email | custodian
     String contentSha256, // set on a signature: SHA-256 of the signed content
     String signedAt,      // set on a signature: ISO timestamp the signature was recorded
     String cancelEffectiveDate, // set on a cancelled document_status_changed: ISO date the cancellation takes effect
-    String sealedAt, // set on document_status_changed: when the platform seal was applied; null until sealed
-    String plainSha256, // set on document_status_changed: SHA-256 of the document's unencrypted PDF bytes; null on a JSON contract
-    String signerFirstName, // set on document_status_changed: the signature's own signer evidence
-    String signerLastName,
+    String sealedAt, // set on document_sealed: when the platform seal was applied
+    String plainSha256, // set on document_sealed: SHA-256 of the document's unencrypted PDF bytes, lowercase hex
+    String signerFirstName, // set on document_status_changed: the signature's own signer evidence, decrypted from service-key ciphertext
+    String signerLastName,  // set on document_status_changed: decrypted from service-key ciphertext
     Boolean signerNameVerified, // true iff the submitted name matched the signer's verified ID name; null when unset
     String requestId, // set on connection_request_accepted | connection_request_rejected
     String publicKeySha256, // set on key_rotated — SHA-256 fingerprint of the person's NEW public key
@@ -76,22 +77,26 @@ public record Change(
         String personId = firstNonNull(
             Parse.str(obj.get("person_user_id")), Parse.str(obj.get("person_id")));
 
-        // document_status_changed carries a document_id + new status (+ a contract action; no slot/value).
+        // document_status_changed carries a document_id + new status (+ a contract action; no slot/value);
+        // document_sealed carries a document_id + the seal time and the plain PDF hash.
         String documentId = Parse.str(obj.get("document_id"));
         boolean isDocStatus = "document_status_changed".equals(event);
         // 2fa_challenge_completed carries the outcome in status (approved|denied|revoked); its
         // challenge_id/completed_at stay in raw. The poll is the record (spec §3).
         String status = (isDocStatus || "2fa_challenge_completed".equals(event)) ? Parse.str(obj.get("status")) : null;
         String action = isDocStatus ? Parse.str(obj.get("action")) : null;
-        String note = isDocStatus ? Parse.str(obj.get("note")) : null;
+        // The signer names and the note are encrypted for the SERVICE key, so the ordinary
+        // decrypt opens them, as it opens a message body.
+        String note = isDocStatus ? decryptOrNull(obj.get("note"), deps) : null;
         String method = isDocStatus ? Parse.str(obj.get("method")) : null;
         String contentSha256 = isDocStatus ? Parse.str(obj.get("content_sha256")) : null;
         String signedAt = isDocStatus ? Parse.str(obj.get("signed_at")) : null;
         String cancelEffectiveDate = isDocStatus ? Parse.str(obj.get("cancel_effective_date")) : null;
-        String sealedAt = isDocStatus ? Parse.str(obj.get("sealed_at")) : null;
-        String plainSha256 = isDocStatus ? Parse.str(obj.get("plain_sha256")) : null;
-        String signerFirstName = isDocStatus ? Parse.str(obj.get("signer_first_name")) : null;
-        String signerLastName = isDocStatus ? Parse.str(obj.get("signer_last_name")) : null;
+        boolean isSealed = "document_sealed".equals(event);
+        String sealedAt = isSealed ? Parse.str(obj.get("sealed_at")) : null;
+        String plainSha256 = isSealed ? Parse.str(obj.get("plain_sha256")) : null;
+        String signerFirstName = isDocStatus ? decryptOrNull(obj.get("signer_first_name"), deps) : null;
+        String signerLastName = isDocStatus ? decryptOrNull(obj.get("signer_last_name"), deps) : null;
         Boolean signerNameVerified = isDocStatus ? Parse.boolOrNull(obj.get("signer_name_verified")) : null;
 
         // connection_request_accepted/_rejected carry the request_id (no slot/value).
@@ -153,6 +158,17 @@ public record Change(
             }
         }
         return out;
+    }
+
+    /**
+     * Service-key ciphertext → plaintext. An absent, null or empty member (XML renders null as an
+     * empty element, which decodes to "") is null and is not decrypted.
+     */
+    private static String decryptOrNull(Object cipher, ModelDeps deps) {
+        if (cipher == null || (cipher instanceof String s && s.isEmpty())) {
+            return null;
+        }
+        return deps.decryptValue().apply(cipher);
     }
 
     private static String firstNonNull(String... candidates) {

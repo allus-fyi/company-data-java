@@ -755,6 +755,11 @@ public final class CompanyDataHandlers {
         raw.put("contentSha256", c.contentSha256());
         raw.put("signedAt", c.signedAt());
         raw.put("cancelEffectiveDate", c.cancelEffectiveDate());
+        raw.put("sealedAt", c.sealedAt());
+        raw.put("plainSha256", c.plainSha256());
+        raw.put("signerFirstName", c.signerFirstName());
+        raw.put("signerLastName", c.signerLastName());
+        raw.put("signerNameVerified", c.signerNameVerified());
         raw.put("requestId", c.requestId());
         raw.put("publicKeySha256", c.publicKeySha256());
         raw.put("verified", c.verified());
