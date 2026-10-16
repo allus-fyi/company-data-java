@@ -78,6 +78,7 @@ class FieldValidationTest {
             assertEquals(want.get("parent"), got.parent(), name);
             assertEquals(want.get("label"), got.label(), name);
             assertEquals(want.get("is_system"), got.isSystem(), name);
+            assertEquals(want.get("system_only"), got.systemOnly(), name);
             assertEquals(want.get("known"), got.known(), name);
             assertEquals(want.get("input"), got.input(), name);
             assertEquals(want.get("lane"), got.lane(), name);

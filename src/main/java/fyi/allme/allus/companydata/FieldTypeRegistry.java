@@ -110,12 +110,18 @@ public final class FieldTypeRegistry {
     private static final Map<String, Pattern> COMPILED = new HashMap<>();
     private static final Set<String> UNCOMPILABLE = new HashSet<>();
 
-    /** A row with every inherited column filled in, plus the validations root-first. */
+    /**
+     * A row with every inherited column filled in, plus the validations root-first.
+     *
+     * <p>{@code systemOnly} marks a type written by the platform alone. It is read off the type's
+     * own row, never inherited, and is false for a type the registry does not carry.
+     */
     public record Resolved(
         String type,
         String parent,
         String label,
         boolean isSystem,
+        boolean systemOnly,
         boolean known,
         String input,
         String lane,
@@ -189,7 +195,7 @@ public final class FieldTypeRegistry {
     private Resolved resolveIn(String type) {
         Map<String, Object> row = byType.get(type);
         if (row == null) {
-            return new Resolved(type, null, type, false, false, null, null, null, null, null, List.of());
+            return new Resolved(type, null, type, false, false, false, null, null, null, null, null, List.of());
         }
 
         // Walk to the root collecting the chain, then fill downward: the nearest ancestor that sets
@@ -241,6 +247,7 @@ public final class FieldTypeRegistry {
             asString(row.get("parent")),
             label == null || label.isEmpty() ? type : label,
             Boolean.TRUE.equals(row.get("is_system")),
+            Boolean.TRUE.equals(row.get("system_only")),
             true,
             input,
             lane,
@@ -358,15 +365,21 @@ public final class FieldTypeRegistry {
         return null;
     }
 
-    /** The types a contact field, a service request row or an admin field may declare. */
+    /**
+     * The types a contact field, a service request row or an admin field may declare: every type
+     * except an option-less choice type and a system-only type.
+     */
     public List<String> requestableTypes() {
-        return filterTypes(t -> !isOptionLessChoice(t));
+        return filterTypes(t -> !isOptionLessChoice(t) && !resolve(t).systemOnly());
     }
 
-    /** The requestable set plus the option-less choice types a flow element supplies options for. */
+    /**
+     * The requestable set plus the option-less choice types a flow element supplies options for.
+     * A system-only type is in neither half.
+     */
     public List<String> flowTypes() {
         List<String> out = new ArrayList<>(requestableTypes());
-        out.addAll(filterTypes(this::isOptionLessChoice));
+        out.addAll(filterTypes(t -> isOptionLessChoice(t) && !resolve(t).systemOnly()));
         return out;
     }
 
